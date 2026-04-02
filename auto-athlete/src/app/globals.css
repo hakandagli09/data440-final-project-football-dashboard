@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base dark theme ────────────────────────────────────── */
+:root {
+  --background: #07080a;
+  --foreground: #e8eaed;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+}
+
+/* ── Scrollbar — dark, thin, unobtrusive ───────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e2231;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a2f42;
+}
+
+/* ── Selection highlight ───────────────────────────────── */
+::selection {
+  background: #00f0ff30;
+  color: #e8eaed;
+}
+
+/* ── Utility layers ────────────────────────────────────── */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* ── Noise texture overlay for depth ───────────────────── */
+.noise-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Card hover glow ───────────────────────────────────── */
+.card-glow {
+  position: relative;
+  overflow: hidden;
+}
+.card-glow::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #00f0ff30, transparent);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.card-glow:hover::after {
+  opacity: 1;
+}
+
+/* ── Stagger animation delays ──────────────────────────── */
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s; }
+.stagger-5 { animation-delay: 0.25s; }
+.stagger-6 { animation-delay: 0.3s; }
+
+/* ── KPI value tabular nums for alignment ──────────────── */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Drop zone pulse ───────────────────────────────────── */
+@keyframes drop-pulse {
+  0%, 100% { border-color: #00f0ff40; box-shadow: 0 0 0 0 #00f0ff20; }
+  50% { border-color: #00f0ff80; box-shadow: 0 0 20px 4px #00f0ff10; }
+}
+.drop-active {
+  animation: drop-pulse 1.5s ease-in-out infinite;
+}
