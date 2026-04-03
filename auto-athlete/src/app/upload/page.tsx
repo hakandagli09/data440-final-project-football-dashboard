@@ -1,19 +1,66 @@
+/**
+ * Upload Page — CSV file ingestion interface for StatSports GPS data.
+ *
+ * Uses `react-dropzone` to provide a drag-and-drop file upload zone.
+ * Currently, files are held in local component state only (no network calls).
+ * Future integration would POST uploaded CSVs to Supabase Storage, then
+ * trigger a server-side parsing pipeline to populate the dashboard.
+ *
+ * Three visual sections:
+ * 1. Drag-and-drop zone with file type validation
+ * 2. File queue showing queued/uploading/complete files
+ * 3. Three-step user guide explaining the upload workflow
+ */
 "use client";
 
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 
+/**
+ * Represents a file in the upload queue.
+ *
+ * @property name   — Original filename from the user's filesystem (e.g. "session_14.csv")
+ * @property size   — File size in bytes, displayed via `formatSize()`
+ * @property status — Tracks the file through the upload pipeline:
+ *                    "ready"     = queued, waiting to be processed
+ *                    "uploading" = currently being sent to the backend
+ *                    "complete"  = successfully stored in Supabase
+ */
 interface UploadedFile {
   name: string;
   size: number;
   status: "ready" | "uploading" | "complete";
 }
 
-export default function UploadPage() {
+/** Shape of each step in the 3-step upload guide at the bottom of the page. */
+interface UploadGuideStep {
+  /** Two-digit step number displayed as large accent text (e.g. "01"). */
+  step: string;
+  /** Short heading for the step. */
+  title: string;
+  /** Explanatory body text for the step. */
+  desc: string;
+}
+
+/**
+ * UploadPage — the main upload interface component.
+ *
+ * Manages a file queue via `useState<UploadedFile[]>` and renders three sections:
+ * the drag-and-drop zone, the file queue list, and a 3-step user guide.
+ */
+export default function UploadPage(): JSX.Element {
   const [files, setFiles] = useState<UploadedFile[]>([]);
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    const newFiles = acceptedFiles.map((f) => ({
+  /**
+   * Callback invoked by react-dropzone when files are dropped or selected.
+   *
+   * Memoized via `useCallback` with an empty dependency array because it only
+   * uses `setFiles` (a React state setter, which is referentially stable).
+   * Maps native `File` objects to the simpler `UploadedFile` shape, defaulting
+   * status to "ready" (queued for processing).
+   */
+  const onDrop = useCallback((acceptedFiles: File[]): void => {
+    const newFiles: UploadedFile[] = acceptedFiles.map((f) => ({
       name: f.name,
       size: f.size,
       status: "ready" as const,
@@ -23,17 +70,45 @@ export default function UploadPage() {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    // `accept` restricts the file picker and drop validation to CSV files only.
+    // The MIME type key ("text/csv") is the primary filter; the extension array
+    // ([".csv"]) is a fallback for systems that don't report MIME types correctly.
     accept: {
       "text/csv": [".csv"],
     },
     multiple: true,
   });
 
-  const formatSize = (bytes: number) => {
+  /**
+   * Converts a raw byte count to a human-readable file size string.
+   *
+   * Three tiers: bytes (< 1 KB), kilobytes (< 1 MB), megabytes (>= 1 MB).
+   * 1024 = bytes per KB, 1048576 = 1024^2 = bytes per MB.
+   */
+  const formatSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1048576).toFixed(1)} MB`;
   };
+
+  /** The three steps shown in the upload guide at the bottom of the page. */
+  const GUIDE_STEPS: UploadGuideStep[] = [
+    {
+      step: "01",
+      title: "Export from StatSports",
+      desc: "Open Apex software → Select session → Export as CSV with all metrics enabled",
+    },
+    {
+      step: "02",
+      title: "Upload Here",
+      desc: "Drag the exported CSV into the upload zone above. Multi-file upload supported.",
+    },
+    {
+      step: "03",
+      title: "Auto Dashboard",
+      desc: "Data is parsed, validated, and your dashboard updates in real-time with session metrics.",
+    },
+  ];
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -63,7 +138,7 @@ export default function UploadPage() {
       >
         <input {...getInputProps()} />
         <div className="flex flex-col items-center justify-center py-20 px-8">
-          {/* Upload icon */}
+          {/* Upload icon — scales up when a file is being dragged over */}
           <div
             className={`w-20 h-20 rounded-2xl flex items-center justify-center mb-6 transition-all duration-300 ${
               isDragActive
@@ -119,7 +194,9 @@ export default function UploadPage() {
           )}
         </div>
 
-        {/* Corner accents */}
+        {/* Corner accents — four absolutely-positioned corner brackets that
+            frame the drop zone, giving it a "targeting reticle" aesthetic
+            consistent with the sports-tech visual language of the app. */}
         <div className="absolute top-3 left-3 w-4 h-4 border-t-2 border-l-2 border-aa-accent/30 rounded-tl" />
         <div className="absolute top-3 right-3 w-4 h-4 border-t-2 border-r-2 border-aa-accent/30 rounded-tr" />
         <div className="absolute bottom-3 left-3 w-4 h-4 border-b-2 border-l-2 border-aa-accent/30 rounded-bl" />
@@ -147,6 +224,8 @@ export default function UploadPage() {
               <div
                 key={`${file.name}-${i}`}
                 className="flex items-center gap-4 px-5 py-3 hover:bg-aa-elevated/30 transition-colors opacity-0 animate-slide-in-left"
+                // Stagger: starts 300ms after the queue container appears,
+                // then each file enters 60ms after the previous one.
                 style={{ animationDelay: `${300 + i * 60}ms` }}
               >
                 {/* File icon */}
@@ -165,7 +244,10 @@ export default function UploadPage() {
                     {file.status}
                   </span>
                 </div>
-                {/* Remove */}
+                {/* Remove button — e.stopPropagation() prevents the click from
+                    bubbling up to the dropzone's getRootProps() click handler,
+                    which would open the file picker when the user intends to
+                    remove a file from the queue. */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -185,23 +267,7 @@ export default function UploadPage() {
 
       {/* ── Upload Guide ─────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-4 opacity-0 animate-slide-up" style={{ animationDelay: "300ms" }}>
-        {[
-          {
-            step: "01",
-            title: "Export from StatSports",
-            desc: "Open Apex software → Select session → Export as CSV with all metrics enabled",
-          },
-          {
-            step: "02",
-            title: "Upload Here",
-            desc: "Drag the exported CSV into the upload zone above. Multi-file upload supported.",
-          },
-          {
-            step: "03",
-            title: "Auto Dashboard",
-            desc: "Data is parsed, validated, and your dashboard updates in real-time with session metrics.",
-          },
-        ].map((item) => (
+        {GUIDE_STEPS.map((item) => (
           <div
             key={item.step}
             className="bg-aa-surface border border-aa-border rounded-xl p-5 hover:border-aa-border-bright transition-colors group"

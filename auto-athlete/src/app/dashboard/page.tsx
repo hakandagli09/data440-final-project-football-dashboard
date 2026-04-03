@@ -1,8 +1,116 @@
+/**
+ * Dashboard Page — main performance overview for Auto Athlete.
+ *
+ * This is a client component ("use client") because it uses CSS animations
+ * with dynamic `style` props for staggered entrance effects. It displays
+ * mock/hardcoded data representing a single practice session's GPS analytics.
+ *
+ * Five visual sections:
+ * 1. KPI Cards (6 metrics across the top row)
+ * 2. Distance Over Time (large area chart placeholder)
+ * 3. Speed Zones (horizontal bar chart by velocity band)
+ * 4. Player Leaderboard (table of top performers)
+ * 5. Acute:Chronic Workload Ratio (donut chart) + Session Info + Alert
+ *
+ * All data is hardcoded. In production, these values would come from
+ * parsed StatSports CSV data stored in Supabase.
+ */
 "use client";
 
 import KPICard from "@/components/KPICard";
 
-const KPI_DATA = [
+// ─── Type Definitions ──────────────────────────────────────────────────────
+
+/**
+ * Configuration for a single KPI card in the top row.
+ * Each metric represents a different physical performance dimension
+ * relevant to football S&C (strength and conditioning).
+ */
+interface KPIConfig {
+  /** Short metric label displayed in the card header. */
+  title: string;
+  /** Formatted numeric string (e.g. "5,847" — pre-formatted for display). */
+  value: string;
+  /** Unit abbreviation (e.g. "m", "m/s", "AU", "bpm", "sprints"). */
+  unit: string;
+  /** Session-over-session delta as a display string (e.g. "12%", "2"). */
+  change: string;
+  /** Direction of the delta — determines arrow icon and color. */
+  changeType: "positive" | "negative" | "neutral";
+  /** Tailwind color token name for the card's accent (e.g. "aa-accent"). */
+  accentColor: string;
+  /** SVG icon element rendered next to the title. */
+  icon: React.ReactNode;
+}
+
+/**
+ * A velocity band in the Speed Zones bar chart.
+ * These bands follow standard GPS sport-science conventions used by
+ * Catapult and StatSports for classifying athlete movement intensity.
+ */
+interface SpeedZone {
+  /** Zone label (e.g. "Zone 5", "Zone 1"). */
+  zone: string;
+  /** Human-readable velocity range (e.g. "> 7.0 m/s"). */
+  label: string;
+  /** Percentage of session time spent in this zone (0–100). */
+  pct: number;
+  /** Tailwind background color class for the bar fill. */
+  color: string;
+}
+
+/** A single row in the Player Leaderboard table. */
+interface PlayerRow {
+  /** Rank position (1 = highest performer). */
+  rank: number;
+  /** Player display name (abbreviated: "J. Williams"). */
+  name: string;
+  /** Position abbreviation (e.g. "WR", "RB", "SS", "CB", "LB"). */
+  pos: string;
+  /** Total distance in meters, formatted with commas. */
+  dist: string;
+  /** Top speed in m/s. */
+  spd: string;
+  /** Player Load in arbitrary units (AU). */
+  load: string;
+}
+
+/** A risk level entry in the ACWR (Acute:Chronic Workload Ratio) legend. */
+interface WorkloadRiskLevel {
+  /** Risk category label (e.g. "Low Risk", "Caution", "High Risk"). */
+  label: string;
+  /** ACWR range for this category (e.g. "0.8–1.3"). */
+  range: string;
+  /** Tailwind background color class for the legend dot. */
+  color: string;
+}
+
+/** A key-value pair displayed in the Session Info card. */
+interface SessionInfoItem {
+  /** Descriptive label (e.g. "Duration", "GPS Fix"). */
+  label: string;
+  /** The corresponding value (e.g. "1h 42m", "18 Hz"). */
+  value: string;
+}
+
+// ─── Mock Data ─────────────────────────────────────────────────────────────
+
+/**
+ * The six Key Performance Indicators displayed across the dashboard's top row.
+ * Each metric represents a different physical performance dimension:
+ * - Total Distance: cumulative meters covered by all tracked players
+ * - Top Speed: fastest instantaneous velocity recorded in the session
+ * - HSR Distance: meters covered above the High-Speed Running threshold (~5.5 m/s)
+ * - Player Load: accelerometer-derived load in arbitrary units (AU)
+ * - Sprint Count: number of efforts exceeding the sprint threshold (~7.0 m/s)
+ * - Avg Heart Rate: mean heart rate across all tracked players
+ *
+ * The `changeType` values use `as const` to narrow to exact string literals.
+ * With the `KPIConfig` interface applied, these assertions are technically
+ * redundant (the interface already constrains the union), but they're kept
+ * for explicitness.
+ */
+const KPI_DATA: KPIConfig[] = [
   {
     title: "Total Distance",
     value: "5,847",
@@ -83,7 +191,74 @@ const KPI_DATA = [
   },
 ];
 
-export default function DashboardPage() {
+/**
+ * Speed zone distribution data for the horizontal bar chart.
+ * Zones follow standard GPS sport-science velocity bands:
+ * - Zone 5 (> 7.0 m/s): Sprinting — colored red (high intensity)
+ * - Zone 4 (5.5–7.0 m/s): High-speed running — colored orange
+ * - Zone 3 (4.0–5.5 m/s): Running — colored amber
+ * - Zone 2 (2.0–4.0 m/s): Jogging — colored cyan (moderate)
+ * - Zone 1 (< 2.0 m/s): Walking — colored gray (low intensity)
+ * Percentages represent time-in-zone distribution for the session.
+ */
+const SPEED_ZONES: SpeedZone[] = [
+  { zone: "Zone 5", label: "> 7.0 m/s", pct: 8, color: "bg-aa-danger" },
+  { zone: "Zone 4", label: "5.5–7.0", pct: 15, color: "bg-aa-warm" },
+  { zone: "Zone 3", label: "4.0–5.5", pct: 28, color: "bg-aa-warning" },
+  { zone: "Zone 2", label: "2.0–4.0", pct: 32, color: "bg-aa-accent" },
+  { zone: "Zone 1", label: "< 2.0", pct: 17, color: "bg-aa-text-dim" },
+];
+
+/** Top 5 players ranked by total distance covered in the session. */
+const PLAYER_DATA: PlayerRow[] = [
+  { rank: 1, name: "J. Williams", pos: "WR", dist: "6,847", spd: "9.2", load: "912" },
+  { rank: 2, name: "M. Carter", pos: "RB", dist: "6,421", spd: "8.8", load: "885" },
+  { rank: 3, name: "D. Thompson", pos: "SS", dist: "6,105", spd: "8.5", load: "847" },
+  { rank: 4, name: "K. Johnson", pos: "CB", dist: "5,982", spd: "9.0", load: "823" },
+  { rank: 5, name: "T. Mitchell", pos: "LB", dist: "5,741", spd: "7.9", load: "801" },
+];
+
+/**
+ * ACWR risk level legend entries.
+ * Based on Gabbett's research on training load and injury risk:
+ * - 0.8–1.3: "Sweet spot" — low injury risk, optimal training stimulus
+ * - 1.3–1.5: Caution zone — elevated injury risk
+ * - > 1.5: High risk — significantly increased injury probability
+ */
+const WORKLOAD_LEVELS: WorkloadRiskLevel[] = [
+  { label: "Low Risk", range: "0.8–1.3", color: "bg-aa-success" },
+  { label: "Caution", range: "1.3–1.5", color: "bg-aa-warning" },
+  { label: "High Risk", range: "> 1.5", color: "bg-aa-danger" },
+];
+
+/** Key-value metadata about the current practice session. */
+const SESSION_INFO: SessionInfoItem[] = [
+  { label: "Duration", value: "1h 42m" },
+  { label: "Players", value: "47 tracked" },
+  // StatSports Apex GPS units sample at 18 Hz (18 position readings per second),
+  // which is the industry standard for professional athlete tracking.
+  { label: "GPS Fix", value: "18 Hz" },
+  { label: "Weather", value: "72°F / Clear" },
+];
+
+// ─── Component ─────────────────────────────────────────────────────────────
+
+/**
+ * DashboardPage — renders all five dashboard sections with staggered animations.
+ *
+ * Animation timeline (approximate):
+ * - 0ms:     Page header fades in
+ * - 0–480ms: KPI cards stagger in (6 cards × 80ms each)
+ * - 500ms:   Distance chart slides up (waits for KPI cascade to finish)
+ * - 600ms:   Speed zones panel slides up
+ * - 700ms+:  Speed zone bars stagger in (5 bars × 60ms each)
+ * - 700ms:   Player leaderboard slides up
+ * - 800ms+:  Player rows stagger in (5 rows × 60ms each)
+ * - 800ms:   ACWR donut slides up
+ * - 900ms:   Session info slides up
+ * - 1000ms:  Alert card slides up (last element — deliberate visual climax)
+ */
+export default function DashboardPage(): JSX.Element {
   return (
     <div className="space-y-6">
       {/* ── Page header ────────────────────────────────────── */}
@@ -97,14 +272,14 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Date selector placeholder */}
+          {/* Date selector placeholder — currently static */}
           <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-aa-border bg-aa-surface text-xs font-mono text-aa-text-secondary hover:border-aa-border-bright transition-colors">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
             </svg>
             Apr 02, 2026
           </button>
-          {/* Export */}
+          {/* Export button placeholder */}
           <button className="px-4 py-2 rounded-lg bg-aa-accent/10 border border-aa-accent/20 text-xs font-semibold text-aa-accent hover:bg-aa-accent/20 transition-colors">
             Export Report
           </button>
@@ -112,6 +287,9 @@ export default function DashboardPage() {
       </div>
 
       {/* ── KPI Cards Row ──────────────────────────────────── */}
+      {/* Each card enters 80ms after the previous one (delay={i * 80}),
+          creating a left-to-right cascade. 80ms is fast enough to feel
+          cohesive but slow enough to be individually perceptible. */}
       <div className="grid grid-cols-6 gap-4">
         {KPI_DATA.map((kpi, i) => (
           <KPICard key={kpi.title} {...kpi} delay={i * 80} />
@@ -120,7 +298,10 @@ export default function DashboardPage() {
 
       {/* ── Main content grid ──────────────────────────────── */}
       <div className="grid grid-cols-12 gap-4">
-        {/* ── Distance Over Time — large chart ──────────── */}
+
+        {/* ── Distance Over Time — large area chart ──────── */}
+        {/* animationDelay 500ms waits for the KPI cascade to finish
+            (6 cards × 80ms = 480ms, rounded up to 500ms). */}
         <div className="col-span-8 bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "500ms" }}>
           <div className="flex items-center justify-between mb-5">
             <div>
@@ -129,6 +310,7 @@ export default function DashboardPage() {
               </h3>
               <p className="text-xs text-aa-text-dim mt-0.5">Session timeline — all players</p>
             </div>
+            {/* Time filter buttons — "Full" is pre-selected (static, no state). */}
             <div className="flex gap-1">
               {["1H", "2H", "Full"].map((label) => (
                 <button
@@ -144,9 +326,11 @@ export default function DashboardPage() {
               ))}
             </div>
           </div>
-          {/* Chart placeholder — mimics an area chart */}
+
+          {/* Chart placeholder — mimics an area chart with pure SVG */}
           <div className="h-[260px] relative overflow-hidden rounded-lg bg-aa-bg/50 border border-aa-border/50">
-            {/* Grid lines */}
+            {/* Y-axis grid lines — 5 horizontal reference lines from 5000m
+                down to 0m in 1250m increments, giving visual scale to the chart. */}
             <div className="absolute inset-0 flex flex-col justify-between py-4 px-4">
               {[0, 1, 2, 3, 4].map((i) => (
                 <div key={i} className="flex items-center gap-3">
@@ -157,18 +341,29 @@ export default function DashboardPage() {
                 </div>
               ))}
             </div>
-            {/* Fake area shape */}
+
+            {/* SVG area chart — hand-drawn cubic Bezier curves.
+                Y coordinates descend (200 → 18) because SVG Y=0 is the top of
+                the viewport, so lower Y values = higher plotted distance.
+                The curve shape represents typical cumulative distance: steep
+                early gains that flatten as the session progresses (players
+                accumulate distance quickly at first, then fatigue). */}
             <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
               <defs>
+                {/* Area-under-curve gradient: fades from 25% opacity cyan at
+                    the data line to transparent at the bottom — a standard
+                    data-viz technique to emphasize the magnitude of the metric. */}
                 <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#00f0ff" stopOpacity="0.25" />
                   <stop offset="100%" stopColor="#00f0ff" stopOpacity="0" />
                 </linearGradient>
               </defs>
+              {/* Filled area beneath the line */}
               <path
                 d="M0,200 C60,190 80,170 120,155 C160,140 200,110 260,95 C320,80 360,85 420,70 C480,55 520,40 580,35 C640,30 680,32 740,28 C800,24 840,20 900,18 L900,260 L0,260 Z"
                 fill="url(#areaGrad)"
               />
+              {/* The line itself (stroke only, no fill) */}
               <path
                 d="M0,200 C60,190 80,170 120,155 C160,140 200,110 260,95 C320,80 360,85 420,70 C480,55 520,40 580,35 C640,30 680,32 740,28 C800,24 840,20 900,18"
                 fill="none"
@@ -177,6 +372,8 @@ export default function DashboardPage() {
                 opacity="0.8"
               />
             </svg>
+
+            {/* X-axis time labels (minutes into the session) */}
             <div className="absolute bottom-3 left-12 right-4 flex justify-between">
               {["0'", "15'", "30'", "45'", "60'", "75'", "90'"].map((t) => (
                 <span key={t} className="text-[10px] font-mono text-aa-text-dim">{t}</span>
@@ -185,20 +382,18 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* ── Speed Zones — bar chart ──────────────────────── */}
+        {/* ── Speed Zones — horizontal bar chart ──────────── */}
         <div className="col-span-4 bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "600ms" }}>
           <h3 className="font-display text-xl tracking-[0.06em] text-aa-text mb-1">
             SPEED ZONES
           </h3>
           <p className="text-xs text-aa-text-dim mb-5">Distribution by velocity band</p>
           <div className="space-y-3">
-            {[
-              { zone: "Zone 5", label: "> 7.0 m/s", pct: 8, color: "bg-aa-danger" },
-              { zone: "Zone 4", label: "5.5–7.0", pct: 15, color: "bg-aa-warm" },
-              { zone: "Zone 3", label: "4.0–5.5", pct: 28, color: "bg-aa-warning" },
-              { zone: "Zone 2", label: "2.0–4.0", pct: 32, color: "bg-aa-accent" },
-              { zone: "Zone 1", label: "< 2.0", pct: 17, color: "bg-aa-text-dim" },
-            ].map((z, i) => (
+            {SPEED_ZONES.map((z, i) => (
+              // Each bar staggers in: starts at 700ms (after the panel itself
+              // enters at 600ms + 100ms buffer), then 60ms between each bar.
+              // 60ms is tighter than the KPI stagger (80ms) because the bars
+              // are visually smaller and closer together.
               <div key={z.zone} className="opacity-0 animate-slide-up" style={{ animationDelay: `${700 + i * 60}ms` }}>
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2">
@@ -216,6 +411,7 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+          {/* Summary stats below the bars */}
           <div className="mt-5 pt-4 border-t border-aa-border/50">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -255,25 +451,24 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {[
-                  { rank: 1, name: "J. Williams", pos: "WR", dist: "6,847", spd: "9.2", load: "912" },
-                  { rank: 2, name: "M. Carter", pos: "RB", dist: "6,421", spd: "8.8", load: "885" },
-                  { rank: 3, name: "D. Thompson", pos: "SS", dist: "6,105", spd: "8.5", load: "847" },
-                  { rank: 4, name: "K. Johnson", pos: "CB", dist: "5,982", spd: "9.0", load: "823" },
-                  { rank: 5, name: "T. Mitchell", pos: "LB", dist: "5,741", spd: "7.9", load: "801" },
-                ].map((p, i) => (
+                {PLAYER_DATA.map((p, i) => (
+                  // Rows stagger in starting at 800ms, 60ms apart.
                   <tr
                     key={p.rank}
                     className="border-b border-aa-border/30 hover:bg-aa-elevated/50 transition-colors cursor-pointer opacity-0 animate-slide-up"
                     style={{ animationDelay: `${800 + i * 60}ms` }}
                   >
                     <td className="px-4 py-3">
+                      {/* padStart(2, "0") zero-pads single-digit ranks (1 → "01")
+                          for monospaced visual alignment in the table column. */}
                       <span className={`text-xs font-mono font-bold ${i === 0 ? "text-aa-accent" : "text-aa-text-dim"}`}>
                         {String(p.rank).padStart(2, "0")}
                       </span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
+                        {/* Position badge — rank 1 gets accent color to
+                            draw attention to the session leader. */}
                         <div className={`w-7 h-7 rounded-md flex items-center justify-center text-[10px] font-bold ${
                           i === 0
                             ? "bg-aa-accent/15 text-aa-accent border border-aa-accent/20"
@@ -294,7 +489,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* ── Workload Comparison ───────────────────────────── */}
+        {/* ── Acute:Chronic Workload Ratio — donut chart ──── */}
         <div className="col-span-4 bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "800ms" }}>
           <h3 className="font-display text-xl tracking-[0.06em] text-aa-text mb-1">
             ACUTE : CHRONIC
@@ -302,10 +497,18 @@ export default function DashboardPage() {
           <p className="text-xs text-aa-text-dim mb-5">7-day vs 28-day workload ratio</p>
 
           <div className="flex items-center justify-center py-6">
-            {/* Donut chart placeholder */}
+            {/* Donut chart — SVG circle with strokeDasharray trick.
+                Math: circumference = 2 × π × radius = 2 × 3.14159 × 50 ≈ 314.
+                The dash length is 82% of that (0.82 × 314 ≈ 257), then a gap
+                of 314 fills the rest. This renders a donut arc proportional
+                to the ACWR value of 0.82.
+                `-rotate-90` rotates the circle so the arc starts at 12 o'clock
+                (SVG circles default to starting at 3 o'clock / east). */}
             <div className="relative w-40 h-40">
               <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
+                {/* Background ring (full circle, dark) */}
                 <circle cx="60" cy="60" r="50" fill="none" stroke="#1e2231" strokeWidth="10" />
+                {/* Foreground arc — length proportional to ACWR value */}
                 <circle
                   cx="60"
                   cy="60"
@@ -318,6 +521,9 @@ export default function DashboardPage() {
                   className="opacity-80"
                 />
               </svg>
+              {/* Center label showing the ACWR value.
+                  0.82 falls within the 0.8–1.3 "sweet spot" (Gabbett's research),
+                  meaning the team is training at an optimal load with low injury risk. */}
               <div className="absolute inset-0 flex flex-col items-center justify-center">
                 <span className="font-display text-3xl text-aa-text">0.82</span>
                 <span className="text-[10px] font-semibold text-aa-success tracking-wider uppercase">Optimal</span>
@@ -325,12 +531,9 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          {/* Risk level legend */}
           <div className="grid grid-cols-3 gap-2 mt-2">
-            {[
-              { label: "Low Risk", range: "0.8–1.3", color: "bg-aa-success" },
-              { label: "Caution", range: "1.3–1.5", color: "bg-aa-warning" },
-              { label: "High Risk", range: "> 1.5", color: "bg-aa-danger" },
-            ].map((item) => (
+            {WORKLOAD_LEVELS.map((item) => (
               <div key={item.label} className="text-center p-2 rounded-lg bg-aa-bg/50">
                 <div className={`w-2 h-2 rounded-full ${item.color} mx-auto mb-1`} />
                 <span className="text-[10px] font-semibold text-aa-text-secondary block">{item.label}</span>
@@ -340,19 +543,15 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* ── Session Notes / Quick Info ────────────────────── */}
+        {/* ── Session Info + Alert ──────────────────────────── */}
         <div className="col-span-3 space-y-4">
+          {/* Session metadata card */}
           <div className="bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "900ms" }}>
             <h3 className="font-display text-lg tracking-[0.06em] text-aa-text mb-3">
               SESSION INFO
             </h3>
             <div className="space-y-3">
-              {[
-                { label: "Duration", value: "1h 42m" },
-                { label: "Players", value: "47 tracked" },
-                { label: "GPS Fix", value: "18 Hz" },
-                { label: "Weather", value: "72°F / Clear" },
-              ].map((item) => (
+              {SESSION_INFO.map((item) => (
                 <div key={item.label} className="flex items-center justify-between py-1 border-b border-aa-border/30 last:border-0">
                   <span className="text-xs text-aa-text-dim">{item.label}</span>
                   <span className="text-xs font-mono font-medium text-aa-text">{item.value}</span>
@@ -361,6 +560,8 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          {/* Alert card — enters last (1000ms) as a deliberate visual climax,
+              drawing the coach's attention to actionable information. */}
           <div className="bg-gradient-to-br from-aa-accent/5 to-transparent border border-aa-accent/10 rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "1000ms" }}>
             <div className="flex items-center gap-2 mb-2">
               <svg className="w-4 h-4 text-aa-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

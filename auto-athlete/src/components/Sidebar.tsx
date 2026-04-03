@@ -1,9 +1,34 @@
+/**
+ * Sidebar — fixed left navigation panel for the Auto Athlete app.
+ *
+ * Rendered inside every layout that needs the dashboard chrome (DashboardLayout,
+ * UploadLayout). Provides primary navigation across the app's main sections.
+ *
+ * Three visual sections from top to bottom:
+ * 1. Logo and branding
+ * 2. Main navigation links (scrollable if they overflow)
+ * 3. Settings link + live session badge
+ *
+ * This is a client component because it uses `usePathname()` from Next.js
+ * to detect the active route and highlight the corresponding nav link.
+ */
 "use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const NAV_ITEMS = [
+/** A single navigation link displayed in the sidebar. */
+interface NavItem {
+  /** The text label shown next to the icon. */
+  label: string;
+  /** The route path this link navigates to (used in <Link href>). */
+  href: string;
+  /** The SVG icon rendered to the left of the label. */
+  icon: React.ReactNode;
+}
+
+/** Primary navigation links shown in the main section of the sidebar. */
+const NAV_ITEMS: NavItem[] = [
   {
     label: "Dashboard",
     href: "/dashboard",
@@ -51,7 +76,8 @@ const NAV_ITEMS = [
   },
 ];
 
-const BOTTOM_ITEMS = [
+/** Secondary navigation links pinned to the bottom of the sidebar. */
+const BOTTOM_ITEMS: NavItem[] = [
   {
     label: "Settings",
     href: "/dashboard/settings",
@@ -64,7 +90,16 @@ const BOTTOM_ITEMS = [
   },
 ];
 
-export default function Sidebar() {
+/**
+ * Sidebar — fixed left navigation for the Auto Athlete dashboard.
+ *
+ * Width is a design constant: `w-[220px]`. Both DashboardLayout and
+ * UploadLayout offset their main content by `ml-[220px]` to match.
+ * If this width changes, update both layout files.
+ */
+export default function Sidebar(): JSX.Element {
+  // usePathname() returns the current URL path and re-renders on navigation,
+  // enabling the active-state highlight on the matching nav link.
   const pathname = usePathname();
 
   return (
@@ -94,6 +129,9 @@ export default function Sidebar() {
           </span>
         </div>
         {NAV_ITEMS.map((item) => {
+          // Exact match — `/dashboard/players` will NOT highlight "Dashboard".
+          // This is intentional for a flat nav structure where each link
+          // represents a distinct, non-nested section.
           const isActive = pathname === item.href;
           return (
             <Link
@@ -110,6 +148,10 @@ export default function Sidebar() {
             >
               <span className={isActive ? "text-aa-accent" : ""}>{item.icon}</span>
               {item.label}
+              {/* Active indicator dot — uses `animate-pulse-glow` keyframe
+                  (defined in tailwind.config.ts) which cycles opacity between
+                  0.4 and 1.0 over 3 seconds, creating a "breathing" effect
+                  to signal that this route is currently active. */}
               {isActive && (
                 <div className="ml-auto w-1.5 h-1.5 rounded-full bg-aa-accent animate-pulse-glow" />
               )}
@@ -141,9 +183,13 @@ export default function Sidebar() {
           );
         })}
 
-        {/* ── Session badge ────────────────────────────────── */}
+        {/* ── Live session badge ─────────────────────────── */}
+        {/* Currently static / hardcoded. In production this would be driven
+            by a real-time Supabase subscription showing the currently active
+            GPS tracking session's name and timestamp. */}
         <div className="mt-3 mx-1 p-3 rounded-lg bg-aa-bg border border-aa-border">
           <div className="flex items-center gap-2 mb-1">
+            {/* Green pulsing dot = session is live and receiving data */}
             <div className="w-2 h-2 rounded-full bg-aa-success animate-pulse-glow" />
             <span className="text-[11px] font-semibold text-aa-text-secondary uppercase tracking-wider">
               Live Session
