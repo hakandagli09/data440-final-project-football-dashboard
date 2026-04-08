@@ -42,6 +42,22 @@ export async function POST(request: NextRequest) {
     const { csvType, players, rows, mappedColumns, unmappedHeaders, skippedRows } = parseResult;
     const tableName = TABLE_MAP[csvType];
 
+    // 0. Check for duplicate uploads
+    let duplicateWarning: string | null = null;
+    const { data: existingUploads } = await supabaseAdmin
+      .from("uploads")
+      .select("id, filename, uploaded_at, row_count")
+      .eq("filename", file.name)
+      .eq("csv_type", csvType);
+
+    if (existingUploads && existingUploads.length > 0) {
+      const prev = existingUploads[0];
+      const prevDate = new Date(prev.uploaded_at).toLocaleDateString("en-US", {
+        month: "short", day: "2-digit", year: "numeric", timeZone: "UTC",
+      });
+      duplicateWarning = `This file was already uploaded on ${prevDate} (${prev.row_count} rows). You may want to delete the previous upload from Data Management to avoid duplicate data.`;
+    }
+
     // 1. Upsert players — insert new ones, skip existing (match on name)
     const playerUpserts = players.map((p) => ({
       name: p.name,
@@ -154,6 +170,7 @@ export async function POST(request: NextRequest) {
       unmappedHeaders,
       skippedRows,
       insertErrors,
+      duplicateWarning,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

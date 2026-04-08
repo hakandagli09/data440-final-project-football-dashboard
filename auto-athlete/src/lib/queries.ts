@@ -5,7 +5,8 @@
  * working with ~30-50 rows per session — no need for Supabase RPCs.
  */
 
-import { supabase } from "./supabase";
+import { supabaseServer as supabase } from "./supabase-server";
+import { subtractDays } from "./date-utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -88,20 +89,21 @@ function pctChange(current: number, previous: number): { change: string; changeT
   };
 }
 
-function subtractDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T00:00:00");
-  d.setDate(d.getDate() - days);
-  return d.toISOString().split("T")[0];
-}
+// subtractDays imported from date-utils.ts
 
 // ─── Queries ──────────────────────────────────────────────────────────────
 
 /** Get all distinct session dates, most recent first. */
 export async function getAvailableSessionDates(): Promise<string[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("gps_sessions")
     .select("session_date")
     .order("session_date", { ascending: false });
+
+  if (error) {
+    console.error("[getAvailableSessionDates] Supabase error:", error.message, error);
+    return [];
+  }
 
   if (!data) return [];
   const unique = Array.from(new Set(data.map((r) => r.session_date as string)));
@@ -110,10 +112,15 @@ export async function getAvailableSessionDates(): Promise<string[]> {
 
 /** Get raw GPS rows for a specific session date. */
 async function getSessionGpsRows(date: string) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("gps_sessions")
     .select("*, players(name, position)")
     .eq("session_date", date);
+
+  if (error) {
+    console.error("[getSessionGpsRows] Supabase error:", error.message, error);
+    return [];
+  }
 
   return data ?? [];
 }

@@ -3,6 +3,7 @@
 import KPICard from "@/components/KPICard";
 import DateSelector from "@/components/DateSelector";
 import Link from "next/link";
+import { formatSessionDate } from "@/lib/date-utils";
 import type {
   KpiData,
   SpeedZoneData,
@@ -102,10 +103,7 @@ export default function DashboardClient({
     );
   }
 
-  const formatDate = (iso: string) => {
-    const d = new Date(iso + "T00:00:00");
-    return d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
-  };
+  const formatDate = formatSessionDate;
 
   // Speed zone summary stats
   const avgSpeed = speedZones.length > 0

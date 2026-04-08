@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { formatSessionDate } from "@/lib/date-utils";
 
 interface DateSelectorProps {
   dates: string[];
@@ -10,10 +11,7 @@ interface DateSelectorProps {
 export default function DateSelector({ dates, currentDate }: DateSelectorProps) {
   const router = useRouter();
 
-  const formatDate = (iso: string) => {
-    const d = new Date(iso + "T00:00:00");
-    return d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
-  };
+  const formatDate = formatSessionDate;
 
   return (
     <div className="relative">

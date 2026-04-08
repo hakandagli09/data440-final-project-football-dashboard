@@ -28,6 +28,7 @@ interface UploadResult {
   unmappedHeaders: string[];
   skippedRows: { row: number; reason: string }[];
   insertErrors: string[];
+  duplicateWarning?: string | null;
 }
 
 interface UploadGuideStep {
@@ -329,6 +330,11 @@ export default function UploadPage(): JSX.Element {
                     {file.result.insertErrors.length > 0 && (
                       <p className="text-[10px] font-mono text-aa-danger mt-1">
                         Insert errors: {file.result.insertErrors.join("; ")}
+                      </p>
+                    )}
+                    {file.result.duplicateWarning && (
+                      <p className="text-[10px] font-mono text-aa-warning mt-1">
+                        ⚠ {file.result.duplicateWarning}
                       </p>
                     )}
                   </div>
