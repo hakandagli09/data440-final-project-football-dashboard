@@ -44,6 +44,12 @@ export interface PlayerProfileData {
     forceFramePct: number | null;
     nordBordPct: number | null;
   };
+  dataFreshness: {
+    gps: string | null;
+    jump: string | null;
+    forceFrame: string | null;
+    nordBord: string | null;
+  };
   requiredMetrics: {
     // Mirrors the sport-science spec metric set for profile v1.
     group: "skills_mids" | "bigs" | "other";
@@ -430,6 +436,12 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
     asymmetry: {
       forceFramePct: latestSqueeze?.max_imbalance ?? null,
       nordBordPct: latestNord?.max_imbalance ?? null,
+    },
+    dataFreshness: {
+      gps: latestGps?.session_date ?? null,
+      jump: latestJump?.test_date ?? null,
+      forceFrame: forceRows?.[0]?.test_date ?? null,
+      nordBord: latestNord?.test_date ?? null,
     },
     requiredMetrics: {
       group,

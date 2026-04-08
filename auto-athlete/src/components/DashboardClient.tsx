@@ -264,9 +264,12 @@ export default function DashboardClient({
               </h3>
               <p className="text-xs text-aa-text-dim mt-0.5">Top performers — Total Distance</p>
             </div>
-            <button className="text-[10px] font-semibold tracking-wider text-aa-accent hover:text-aa-accent/80 transition-colors uppercase">
+            <Link
+              href="/dashboard/players"
+              className="text-[10px] font-semibold tracking-wider text-aa-accent hover:text-aa-accent/80 transition-colors uppercase"
+            >
               View All →
-            </button>
+            </Link>
           </div>
           <div className="overflow-hidden rounded-lg border border-aa-border/50">
             <table className="w-full">

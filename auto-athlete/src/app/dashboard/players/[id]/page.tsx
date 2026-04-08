@@ -104,6 +104,39 @@ export default async function PlayerProfilePage({ params }: PageProps) {
         </div>
       </div>
 
+      <div className="bg-aa-surface border border-aa-border rounded-xl p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-lg tracking-[0.06em] text-aa-text">DATA FRESHNESS</h2>
+          <span className="text-[10px] uppercase tracking-wider text-aa-text-dim">Latest by source</span>
+        </div>
+        <div className="mt-3 grid grid-cols-4 gap-3">
+          <div className="rounded-lg bg-aa-bg/50 p-3 border border-aa-border/40">
+            <p className="text-xs text-aa-text-dim">GPS</p>
+            <p className="mt-1 text-xs font-mono text-aa-text">
+              {profile.dataFreshness.gps ? formatSessionDate(profile.dataFreshness.gps) : "No data"}
+            </p>
+          </div>
+          <div className="rounded-lg bg-aa-bg/50 p-3 border border-aa-border/40">
+            <p className="text-xs text-aa-text-dim">Jump</p>
+            <p className="mt-1 text-xs font-mono text-aa-text">
+              {profile.dataFreshness.jump ? formatSessionDate(profile.dataFreshness.jump) : "No data"}
+            </p>
+          </div>
+          <div className="rounded-lg bg-aa-bg/50 p-3 border border-aa-border/40">
+            <p className="text-xs text-aa-text-dim">ForceFrame</p>
+            <p className="mt-1 text-xs font-mono text-aa-text">
+              {profile.dataFreshness.forceFrame ? formatSessionDate(profile.dataFreshness.forceFrame) : "No data"}
+            </p>
+          </div>
+          <div className="rounded-lg bg-aa-bg/50 p-3 border border-aa-border/40">
+            <p className="text-xs text-aa-text-dim">NordBord</p>
+            <p className="mt-1 text-xs font-mono text-aa-text">
+              {profile.dataFreshness.nordBord ? formatSessionDate(profile.dataFreshness.nordBord) : "No data"}
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-aa-surface border border-aa-border rounded-xl p-5 space-y-4">
           <h2 className="font-display text-xl tracking-[0.06em] text-aa-text">14-DAY TRENDS</h2>
