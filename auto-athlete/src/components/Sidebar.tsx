@@ -14,8 +14,10 @@
  */
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
 /** A single navigation link displayed in the sidebar. */
 interface NavItem {
@@ -98,9 +100,21 @@ const BOTTOM_ITEMS: NavItem[] = [
  * If this width changes, update both layout files.
  */
 export default function Sidebar(): JSX.Element {
-  // usePathname() returns the current URL path and re-renders on navigation,
-  // enabling the active-state highlight on the matching nav link.
   const pathname = usePathname();
+  const [latestSession, setLatestSession] = useState<{ title: string; date: string } | null>(null);
+
+  useEffect(() => {
+    supabase
+      .from("gps_sessions")
+      .select("session_title, session_date")
+      .order("session_date", { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setLatestSession({ title: data[0].session_title ?? "Session", date: data[0].session_date });
+        }
+      });
+  }, []);
 
   return (
     <aside className="fixed top-0 left-0 z-40 h-screen w-[220px] bg-aa-surface border-r border-aa-border flex flex-col">
@@ -183,25 +197,27 @@ export default function Sidebar(): JSX.Element {
           );
         })}
 
-        {/* ── Live session badge ─────────────────────────── */}
-        {/* Currently static / hardcoded. In production this would be driven
-            by a real-time Supabase subscription showing the currently active
-            GPS tracking session's name and timestamp. */}
-        <div className="mt-3 mx-1 p-3 rounded-lg bg-aa-bg border border-aa-border">
-          <div className="flex items-center gap-2 mb-1">
-            {/* Green pulsing dot = session is live and receiving data */}
-            <div className="w-2 h-2 rounded-full bg-aa-success animate-pulse-glow" />
-            <span className="text-[11px] font-semibold text-aa-text-secondary uppercase tracking-wider">
-              Live Session
-            </span>
+        {/* ── Latest session badge ────────────────────────── */}
+        {latestSession && (
+          <div className="mt-3 mx-1 p-3 rounded-lg bg-aa-bg border border-aa-border">
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-2 h-2 rounded-full bg-aa-success animate-pulse-glow" />
+              <span className="text-[11px] font-semibold text-aa-text-secondary uppercase tracking-wider">
+                Latest Session
+              </span>
+            </div>
+            <p className="text-xs text-aa-text-dim">
+              {latestSession.title}
+            </p>
+            <p className="text-[10px] font-mono text-aa-text-dim mt-1">
+              {new Date(latestSession.date + "T00:00:00").toLocaleDateString("en-US", {
+                month: "short",
+                day: "2-digit",
+                year: "numeric",
+              }).toUpperCase()}
+            </p>
           </div>
-          <p className="text-xs text-aa-text-dim">
-            Spring Practice #14
-          </p>
-          <p className="text-[10px] font-mono text-aa-text-dim mt-1">
-            APR 02 2026 · 14:30
-          </p>
-        </div>
+        )}
       </div>
     </aside>
   );

@@ -38,6 +38,7 @@ interface KPICardProps {
   icon: React.ReactNode;
   accentColor?: string;
   delay?: number;
+  sparklineData?: number[];
 }
 
 /** Maps changeType to the corresponding Tailwind text color class. */
@@ -70,6 +71,7 @@ export default function KPICard({
   icon,
   accentColor = "aa-accent",
   delay = 0,
+  sparklineData,
 }: KPICardProps): JSX.Element {
   return (
     <div
@@ -113,26 +115,25 @@ export default function KPICard({
         <span className="text-sm font-medium text-aa-text-dim">{unit}</span>
       </div>
 
-      {/* Sparkline placeholder — 24 bars representing notional hourly data.
-          Height formula: `15 + Math.sin(i * 0.7 + delay) * 12 + Math.random() * 8`
-          - sin() provides a smooth wave pattern
-          - `+ delay` seeds each card differently so sparklines look unique
-          - Math.random() adds jitter for realism
-          Note: Math.random() is called during render, so the sparkline changes
-          on re-render. Acceptable for a placeholder; real data would replace this. */}
       <div className="mt-4 h-8 flex items-end gap-[2px]">
-        {Array.from({ length: 24 }, (_, i) => {
-          const h = 15 + Math.sin(i * 0.7 + delay) * 12 + Math.random() * 8;
-          return (
-            <div
-              key={i}
-              className={`flex-1 rounded-sm bg-${accentColor} opacity-10 group-hover:opacity-25 transition-opacity duration-500`}
-              // On hover, bars transition opacity with a left-to-right cascade —
-              // each bar 20ms after the previous — creating a "wave" reveal.
-              style={{ height: `${h}%`, transitionDelay: `${i * 20}ms` }}
-            />
-          );
-        })}
+        {(() => {
+          const data = sparklineData && sparklineData.length > 0
+            ? sparklineData
+            : Array.from({ length: 10 }, (_, i) => 15 + Math.sin(i * 0.7 + delay) * 12 + 8);
+          const min = Math.min(...data);
+          const max = Math.max(...data);
+          const range = max - min || 1;
+          return data.map((v, i) => {
+            const h = 10 + ((v - min) / range) * 80;
+            return (
+              <div
+                key={i}
+                className={`flex-1 rounded-sm bg-${accentColor} opacity-10 group-hover:opacity-25 transition-opacity duration-500`}
+                style={{ height: `${h}%`, transitionDelay: `${i * 20}ms` }}
+              />
+            );
+          });
+        })()}
       </div>
     </div>
   );

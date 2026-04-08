@@ -381,7 +381,7 @@ function parseTime(raw: string): string | null {
   // 12h format: "3:00:00 PM"
   const match = trimmed.match(/^(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$/i);
   if (match) {
-    let [, h, min, sec, period] = match;
+    const [, h, min, sec, period] = match;
     let hour = parseInt(h, 10);
     if (period.toUpperCase() === "PM" && hour !== 12) hour += 12;
     if (period.toUpperCase() === "AM" && hour === 12) hour = 0;
@@ -391,7 +391,7 @@ function parseTime(raw: string): string | null {
   // Time without seconds: "4:48 PM"
   const match2 = trimmed.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
   if (match2) {
-    let [, h, min, period] = match2;
+    const [, h, min, period] = match2;
     let hour = parseInt(h, 10);
     if (period.toUpperCase() === "PM" && hour !== 12) hour += 12;
     if (period.toUpperCase() === "AM" && hour === 12) hour = 0;

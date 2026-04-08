@@ -27,7 +27,7 @@ Web app for Brian Kish (S&C coach, William & Mary Football) that automates his 5
 ├── supabase/
 │   └── schema.sql              # Full database schema (run in Supabase SQL Editor)
 └── auto-athlete/               # Next.js app
-    ├── .env.local              # Supabase URL + anon key
+    ├── .env.local              # Supabase URL + anon key + service role key
     ├── package.json
     ├── tailwind.config.ts      # Custom aa-* color tokens, fonts, animations
     └── src/
@@ -35,38 +35,47 @@ Web app for Brian Kish (S&C coach, William & Mary Football) that automates his 5
         │   ├── layout.tsx          # Root layout (fonts, dark mode)
         │   ├── page.tsx            # / → redirects to /dashboard
         │   ├── globals.css         # Dark theme, noise overlay, card glow, scrollbar
+        │   ├── api/
+        │   │   └── upload/
+        │   │       └── route.ts    # POST /api/upload — CSV parse + Supabase insert
         │   ├── dashboard/
         │   │   ├── layout.tsx      # Sidebar + TopBar chrome
         │   │   └── page.tsx        # Main dashboard (hardcoded mock data)
         │   └── upload/
         │       ├── layout.tsx      # Sidebar + TopBar chrome (same as dashboard)
-        │       └── page.tsx        # Drag-and-drop CSV upload (react-dropzone)
+        │       └── page.tsx        # Drag-and-drop CSV upload → calls /api/upload
         ├── components/
         │   ├── Sidebar.tsx         # Fixed left nav (220px), route-aware active state
         │   ├── TopBar.tsx          # Sticky header (system status, search, avatar)
         │   └── KPICard.tsx         # Animated metric card with sparkline
         └── lib/
-            └── supabase.ts         # Singleton Supabase client (anon key only)
+            ├── supabase.ts         # Singleton Supabase client (anon key only)
+            └── csv-parser.ts       # Auto-detect CSV type, map columns to DB schema
 ```
 
 ## Current State
 
-**Visual shell is built and running.** All data on the dashboard is hardcoded/mock. No backend integration yet.
+**Visual shell + CSV upload pipeline built.** Dashboard still shows hardcoded mock data. Upload pipeline is functional — parses all 4 CSV types and inserts into Supabase.
 
 What exists:
 - `/dashboard` — KPI cards, area chart placeholder, speed zones bar chart, player leaderboard, ACWR donut, session info, alert card. All mock data.
-- `/upload` — Drag-and-drop zone (react-dropzone), file queue UI, 3-step guide. Files are held in local state only — no upload to Supabase yet.
+- `/upload` — Drag-and-drop zone (react-dropzone) wired to `/api/upload`. Auto-detects CSV type by column headers, maps only present columns, upserts players, inserts data rows. Shows per-file status, detected type, row counts, errors.
+- `POST /api/upload` — server-side route using service role key. Parses CSV → upserts players → creates upload record → batch-inserts data rows.
+- `csv-parser.ts` — type detection (GPS: "Session Date", Jump: "Test Type"+"BW [KG]", ForceFrame: "Direction"+"Mode", NordBord: "Date UTC"+"L Max Torque"). Full column mappings for all 4 types. Handles date/time conversion, BOM, trailing whitespace.
 - Sidebar nav with links to Dashboard, Upload, Players, Sessions, Reports, Settings (only Dashboard and Upload have pages)
 - Dark sports analytics aesthetic: Bebas Neue headers, electric cyan accent (#00f0ff), noise texture, staggered entrance animations
+- `.env.local` has Supabase URL, anon key, and service role key configured
 
 What needs to be built:
-1. **CSV parsing pipeline** — parse all 4 CSV types, validate columns, store in Supabase
+1. ~~**Deploy schema** — run `supabase/schema.sql` in the Supabase SQL Editor~~ ✓ Done
 2. **Team Dashboard** — aggregate metrics by date and practice type (replace mock data)
 3. **Positional Dashboard** — averages by position group (QB, RB, WR, DB, etc.)
 4. **Player Profile** — individual metrics with 7-day rolling averages, fatigue module, asymmetry
 5. **Weekly Progression** — planned vs. actual training load over the season
 6. **Comparison Views** — day-to-day, week-to-week, custom range, full season
 7. **Flagging System** — z-score based alerts surfaced in the existing alert card
+8. **Data Management page** — view/delete/re-upload uploaded files
+9. **Injury Investigation** — prospective risk scoring, retrospective 14-day timeline
 
 ## Database Schema (Supabase)
 
