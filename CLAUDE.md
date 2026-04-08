@@ -32,49 +32,64 @@ Web app for Brian Kish (S&C coach, William & Mary Football) that automates his 5
     ├── tailwind.config.ts      # Custom aa-* color tokens, fonts, animations
     └── src/
         ├── app/
-        │   ├── layout.tsx          # Root layout (fonts, dark mode)
-        │   ├── page.tsx            # / → redirects to /dashboard
-        │   ├── globals.css         # Dark theme, noise overlay, card glow, scrollbar
+        │   ├── layout.tsx              # Root layout (fonts, dark mode)
+        │   ├── page.tsx                # / → redirects to /dashboard
+        │   ├── globals.css             # Dark theme, noise overlay, card glow, scrollbar
         │   ├── api/
-        │   │   └── upload/
-        │   │       └── route.ts    # POST /api/upload — CSV parse + Supabase insert
+        │   │   ├── upload/route.ts     # POST /api/upload — CSV parse + Supabase insert
+        │   │   ├── uploads/route.ts    # GET /api/uploads — upload history + player breakdown
+        │   │   └── uploads/[id]/route.ts # DELETE /api/uploads/:id — hard delete (cascade)
         │   ├── dashboard/
-        │   │   ├── layout.tsx      # Sidebar + TopBar chrome
-        │   │   └── page.tsx        # Main dashboard (hardcoded mock data)
-        │   └── upload/
-        │       ├── layout.tsx      # Sidebar + TopBar chrome (same as dashboard)
-        │       └── page.tsx        # Drag-and-drop CSV upload → calls /api/upload
+        │   │   ├── layout.tsx          # Sidebar + TopBar chrome
+        │   │   ├── page.tsx            # Main dashboard (live Supabase aggregates)
+        │   │   ├── players/page.tsx    # Stub page (coming soon + player count)
+        │   │   ├── sessions/page.tsx   # Stub page (coming soon + session count)
+        │   │   └── reports/page.tsx    # Stub page (coming soon)
+        │   ├── upload/
+        │   │   ├── layout.tsx          # Sidebar + TopBar chrome (same as dashboard)
+        │   │   └── page.tsx            # Drag-and-drop CSV upload → calls /api/upload
+        │   └── data-management/
+        │       ├── layout.tsx          # Sidebar + TopBar chrome
+        │       └── page.tsx            # Upload table + filter + expand + delete
         ├── components/
-        │   ├── Sidebar.tsx         # Fixed left nav (220px), route-aware active state
-        │   ├── TopBar.tsx          # Sticky header (system status, search, avatar)
-        │   └── KPICard.tsx         # Animated metric card with sparkline
+        │   ├── Sidebar.tsx             # Fixed left nav (220px), route-aware active state
+        │   ├── TopBar.tsx              # Sticky header (system status, search, avatar)
+        │   ├── KPICard.tsx             # Animated metric card with sparkline
+        │   ├── DashboardClient.tsx     # Dashboard UI renderer
+        │   └── DateSelector.tsx        # Session date dropdown
         └── lib/
-            ├── supabase.ts         # Singleton Supabase client (anon key only)
-            └── csv-parser.ts       # Auto-detect CSV type, map columns to DB schema
+            ├── supabase.ts             # Client-side Supabase client (anon key only)
+            ├── supabase-server.ts      # Server-side Supabase client (service role key)
+            ├── queries.ts              # Dashboard data queries/aggregations
+            ├── date-utils.ts           # Timezone-safe date formatting and arithmetic
+            └── csv-parser.ts           # Auto-detect CSV type, map columns to DB schema
 ```
 
 ## Current State
 
-**Visual shell + CSV upload pipeline built.** Dashboard still shows hardcoded mock data. Upload pipeline is functional — parses all 4 CSV types and inserts into Supabase.
+**Live dashboard + CSV upload + data management are built.** Dashboard reads real Supabase data; upload pipeline is functional for all 4 CSV types.
 
 What exists:
-- `/dashboard` — KPI cards, area chart placeholder, speed zones bar chart, player leaderboard, ACWR donut, session info, alert card. All mock data.
-- `/upload` — Drag-and-drop zone (react-dropzone) wired to `/api/upload`. Auto-detects CSV type by column headers, maps only present columns, upserts players, inserts data rows. Shows per-file status, detected type, row counts, errors.
-- `POST /api/upload` — server-side route using service role key. Parses CSV → upserts players → creates upload record → batch-inserts data rows.
-- `csv-parser.ts` — type detection (GPS: "Session Date", Jump: "Test Type"+"BW [KG]", ForceFrame: "Direction"+"Mode", NordBord: "Date UTC"+"L Max Torque"). Full column mappings for all 4 types. Handles date/time conversion, BOM, trailing whitespace.
-- Sidebar nav with links to Dashboard, Upload, Players, Sessions, Reports, Settings (only Dashboard and Upload have pages)
-- Dark sports analytics aesthetic: Bebas Neue headers, electric cyan accent (#00f0ff), noise texture, staggered entrance animations
-- `.env.local` has Supabase URL, anon key, and service role key configured
+- `/dashboard` — KPI cards, speed zones, leaderboard, ACWR, session info, and alert card backed by live Supabase queries (`src/lib/queries.ts`).
+- `/upload` — Drag-and-drop zone (react-dropzone) wired to `/api/upload`. Auto-detects CSV type, maps known columns, upserts players, inserts rows, and returns parse/insert diagnostics.
+- `POST /api/upload` — server route using service role key. Parses CSV -> upserts players -> creates upload record -> batch inserts data rows. Also returns a `duplicateWarning` when the same filename+type was previously uploaded.
+- `/data-management` — table of uploaded files with CSV type filters, expandable player breakdown per upload, parse/error details, and hard-delete action.
+- `GET /api/uploads` + `DELETE /api/uploads/:id` — list uploads and delete uploads (delete cascades to `gps_sessions`, `jump_tests`, `force_frame_tests`, `nordbord_tests` through `upload_id` FK).
+- `/dashboard/players`, `/dashboard/sessions`, `/dashboard/reports` — working stub pages (no longer 404) with "coming soon" states; Players and Sessions show live counts.
+- `csv-parser.ts` — type detection (GPS: "Session Date", Jump: "Test Type"+"BW [KG]", ForceFrame: "Direction"+"Mode", NordBord: "Date UTC"+"L Max Torque"), full mappings, date/time conversion, BOM/whitespace handling.
+- `date-utils.ts` — timezone-safe formatting/arithmetic for date-only strings (`YYYY-MM-DD`) to prevent off-by-one display issues.
+- Dark sports analytics aesthetic remains: Bebas Neue headers, electric cyan accent (#00f0ff), noise texture, staggered entrance animations.
+- `.env.local` uses Supabase URL + anon key + service role key.
 
 What needs to be built:
 1. ~~**Deploy schema** — run `supabase/schema.sql` in the Supabase SQL Editor~~ ✓ Done
-2. **Team Dashboard** — aggregate metrics by date and practice type (replace mock data)
+2. ~~**Team Dashboard foundation** — replace mock dashboard with live Supabase data~~ ✓ Done (core cards/leaderboard/session info wired)
 3. **Positional Dashboard** — averages by position group (QB, RB, WR, DB, etc.)
 4. **Player Profile** — individual metrics with 7-day rolling averages, fatigue module, asymmetry
 5. **Weekly Progression** — planned vs. actual training load over the season
 6. **Comparison Views** — day-to-day, week-to-week, custom range, full season
 7. **Flagging System** — z-score based alerts surfaced in the existing alert card
-8. **Data Management page** — view/delete/re-upload uploaded files
+8. ~~**Data Management page** — view/delete uploaded files + inspect upload errors~~ ✓ Done (re-upload shortcut still pending)
 9. **Injury Investigation** — prospective risk scoring, retrospective 14-day timeline
 
 ## Database Schema (Supabase)
@@ -301,23 +316,7 @@ From `force_frame_tests`: L/R max force, imbalance %, RFD at 50ms and 100ms wind
 
 From `nordbord_tests`: L/R max force, torque, imbalance %, RFD at 50ms and 100ms windows
 
-**Database addition required:** Add an `injuries` table to `supabase/schema.sql`:
-```sql
-create table injuries (
-  id uuid primary key default gen_random_uuid(),
-  player_id uuid references players(id) on delete cascade,
-  injury_date date not null,
-  injury_type text,          -- e.g. 'hamstring strain', 'groin pull'
-  body_part text,            -- e.g. 'left hamstring', 'right groin'
-  status text not null default 'injured',
-                             -- 'injured' | 'rehab' | 'return_to_play' | 'cleared'
-  expected_return date,      -- optional estimated return date
-  notes text,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-```
-This table enables both the retrospective lookup and future pattern analysis across multiple players/injuries.
+**Schema status:** `injuries` table already exists in `supabase/schema.sql` with the required status workflow (`injured`, `rehab`, `return_to_play`, `cleared`).
 
 ### Player status and rehab mode
 
@@ -370,30 +369,18 @@ Players can be declared **Injured** or **In Rehab** from the Player Profile page
 
 ### Data management page
 
-Brian needs a dedicated page (add to Sidebar as **Data Management**) where he can view, correct, and delete uploaded data. This handles cases where a wrong file was uploaded or data didn't parse correctly.
+**Current status:** Implemented at `/data-management` with sidebar navigation, CSV type filters, upload table, expandable player breakdown, parse/error detail view, and hard delete with confirmation.
 
 **UI requirements:**
 - Table listing every uploaded file with: filename, detected CSV type, upload date, number of rows parsed, and status (success / error / partial).
 - Per-file actions:
-  - **Delete** — removes all rows in Supabase that came from that upload. Requires a confirmation dialog ("This will delete X rows for Y players. Are you sure?"). This is a hard delete — data is gone.
-  - **Re-upload** — opens the drag-and-drop uploader pre-filtered to that CSV type, so Brian can drop a corrected file in its place.
+  - **Delete** — implemented. Removes all rows in Supabase from that upload with confirmation (hard delete).
+  - **Re-upload** — pending. Should open uploader pre-filtered to the same CSV type.
 - Filter the table by CSV type (GPS, Force Plate, ForceFrame, NordBord) and by date range.
 - Show a per-player breakdown: clicking a file row expands it to show which players' records are included, so Brian can verify the right athletes are in the data before or after deletion.
 - If a file had parse errors (missing columns, bad rows), show a warning badge and a detail panel listing which rows were skipped and why.
 
-**Database addition required:** Add an `uploads` table to track file provenance:
-```sql
-create table uploads (
-  id uuid primary key default gen_random_uuid(),
-  filename text not null,
-  csv_type text not null,    -- 'gps' | 'jump' | 'force_frame' | 'nordbord'
-  uploaded_at timestamptz default now(),
-  row_count int,
-  status text default 'success', -- 'success' | 'partial' | 'error'
-  error_detail jsonb          -- skipped rows and reasons if partial/error
-);
-```
-Add an `upload_id` foreign key column to `gps_sessions`, `jump_tests`, `force_frame_tests`, and `nordbord_tests` so deletions cascade correctly — deleting an upload record removes all associated rows.
+**Schema status:** `uploads` table and `upload_id` foreign keys are already implemented in `supabase/schema.sql` with `ON DELETE CASCADE` behavior on all four data tables.
 
 ### Rehab vs. active player comparison
 
