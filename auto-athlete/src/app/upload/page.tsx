@@ -2,67 +2,56 @@
  * Upload Page — CSV file ingestion interface for StatSports GPS data.
  *
  * Uses `react-dropzone` to provide a drag-and-drop file upload zone.
- * Currently, files are held in local component state only (no network calls).
- * Future integration would POST uploaded CSVs to Supabase Storage, then
- * trigger a server-side parsing pipeline to populate the dashboard.
- *
- * Three visual sections:
- * 1. Drag-and-drop zone with file type validation
- * 2. File queue showing queued/uploading/complete files
- * 3. Three-step user guide explaining the upload workflow
+ * Files are sent to /api/upload which auto-detects the CSV type,
+ * parses columns, and inserts into Supabase.
  */
 "use client";
 
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 
-/**
- * Represents a file in the upload queue.
- *
- * @property name   — Original filename from the user's filesystem (e.g. "session_14.csv")
- * @property size   — File size in bytes, displayed via `formatSize()`
- * @property status — Tracks the file through the upload pipeline:
- *                    "ready"     = queued, waiting to be processed
- *                    "uploading" = currently being sent to the backend
- *                    "complete"  = successfully stored in Supabase
- */
 interface UploadedFile {
   name: string;
   size: number;
-  status: "ready" | "uploading" | "complete";
+  file: File;
+  status: "ready" | "uploading" | "complete" | "error";
+  result?: UploadResult;
+  error?: string;
 }
 
-/** Shape of each step in the 3-step upload guide at the bottom of the page. */
+interface UploadResult {
+  csvType: string;
+  playersFound: number;
+  rowsParsed: number;
+  rowsInserted: number;
+  mappedColumns: number;
+  unmappedHeaders: string[];
+  skippedRows: { row: number; reason: string }[];
+  insertErrors: string[];
+}
+
 interface UploadGuideStep {
-  /** Two-digit step number displayed as large accent text (e.g. "01"). */
   step: string;
-  /** Short heading for the step. */
   title: string;
-  /** Explanatory body text for the step. */
   desc: string;
 }
 
-/**
- * UploadPage — the main upload interface component.
- *
- * Manages a file queue via `useState<UploadedFile[]>` and renders three sections:
- * the drag-and-drop zone, the file queue list, and a 3-step user guide.
- */
+const CSV_TYPE_LABELS: Record<string, string> = {
+  gps: "StatSports GPS",
+  jump: "Force Plate (CMJ)",
+  force_frame: "ForceFrame (Hip AD/AB)",
+  nordbord: "NordBord (Nordic)",
+};
+
 export default function UploadPage(): JSX.Element {
   const [files, setFiles] = useState<UploadedFile[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  /**
-   * Callback invoked by react-dropzone when files are dropped or selected.
-   *
-   * Memoized via `useCallback` with an empty dependency array because it only
-   * uses `setFiles` (a React state setter, which is referentially stable).
-   * Maps native `File` objects to the simpler `UploadedFile` shape, defaulting
-   * status to "ready" (queued for processing).
-   */
   const onDrop = useCallback((acceptedFiles: File[]): void => {
     const newFiles: UploadedFile[] = acceptedFiles.map((f) => ({
       name: f.name,
       size: f.size,
+      file: f,
       status: "ready" as const,
     }));
     setFiles((prev) => [...prev, ...newFiles]);
@@ -70,28 +59,68 @@ export default function UploadPage(): JSX.Element {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    // `accept` restricts the file picker and drop validation to CSV files only.
-    // The MIME type key ("text/csv") is the primary filter; the extension array
-    // ([".csv"]) is a fallback for systems that don't report MIME types correctly.
-    accept: {
-      "text/csv": [".csv"],
-    },
+    accept: { "text/csv": [".csv"] },
     multiple: true,
   });
 
-  /**
-   * Converts a raw byte count to a human-readable file size string.
-   *
-   * Three tiers: bytes (< 1 KB), kilobytes (< 1 MB), megabytes (>= 1 MB).
-   * 1024 = bytes per KB, 1048576 = 1024^2 = bytes per MB.
-   */
   const formatSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1048576).toFixed(1)} MB`;
   };
 
-  /** The three steps shown in the upload guide at the bottom of the page. */
+  const processFile = async (index: number) => {
+    setFiles((prev) =>
+      prev.map((f, i) => (i === index ? { ...f, status: "uploading" as const } : f))
+    );
+
+    const fileEntry = files[index];
+    const formData = new FormData();
+    formData.append("file", fileEntry.file);
+
+    try {
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setFiles((prev) =>
+          prev.map((f, i) =>
+            i === index ? { ...f, status: "error" as const, error: data.error } : f
+          )
+        );
+        return;
+      }
+
+      setFiles((prev) =>
+        prev.map((f, i) =>
+          i === index ? { ...f, status: "complete" as const, result: data } : f
+        )
+      );
+    } catch (err) {
+      setFiles((prev) =>
+        prev.map((f, i) =>
+          i === index
+            ? { ...f, status: "error" as const, error: err instanceof Error ? err.message : "Upload failed" }
+            : f
+        )
+      );
+    }
+  };
+
+  const processAll = async () => {
+    setIsProcessing(true);
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].status === "ready") {
+        await processFile(i);
+      }
+    }
+    setIsProcessing(false);
+  };
+
   const GUIDE_STEPS: UploadGuideStep[] = [
     {
       step: "01",
@@ -110,6 +139,19 @@ export default function UploadPage(): JSX.Element {
     },
   ];
 
+  const statusIcon = (status: UploadedFile["status"]) => {
+    switch (status) {
+      case "ready":
+        return <div className="w-2 h-2 rounded-full bg-aa-text-dim" />;
+      case "uploading":
+        return <div className="w-2 h-2 rounded-full bg-aa-accent animate-pulse-glow" />;
+      case "complete":
+        return <div className="w-2 h-2 rounded-full bg-aa-success" />;
+      case "error":
+        return <div className="w-2 h-2 rounded-full bg-aa-danger" />;
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* ── Page Header ──────────────────────────────────── */}
@@ -118,7 +160,7 @@ export default function UploadPage(): JSX.Element {
           UPLOAD SESSION DATA
         </h1>
         <p className="mt-1 text-sm text-aa-text-secondary">
-          Import CSV exports from StatSports Apex — data will auto-populate the dashboard
+          Import CSV exports from StatSports Apex, Force Plate, ForceFrame, or NordBord — type is auto-detected
         </p>
       </div>
 
@@ -138,7 +180,6 @@ export default function UploadPage(): JSX.Element {
       >
         <input {...getInputProps()} />
         <div className="flex flex-col items-center justify-center py-20 px-8">
-          {/* Upload icon — scales up when a file is being dragged over */}
           <div
             className={`w-20 h-20 rounded-2xl flex items-center justify-center mb-6 transition-all duration-300 ${
               isDragActive
@@ -176,15 +217,13 @@ export default function UploadPage(): JSX.Element {
               <p className="text-sm text-aa-text-secondary mb-4">
                 or click to browse your file system
               </p>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-aa-bg border border-aa-border">
-                  <div className="w-2 h-2 rounded-full bg-aa-success" />
-                  <span className="text-[11px] font-mono text-aa-text-dim">StatSports CSV</span>
-                </div>
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-aa-bg border border-aa-border">
-                  <div className="w-2 h-2 rounded-full bg-aa-success" />
-                  <span className="text-[11px] font-mono text-aa-text-dim">Apex Export</span>
-                </div>
+              <div className="flex items-center gap-4 flex-wrap justify-center">
+                {["StatSports GPS", "Force Plate CMJ", "ForceFrame", "NordBord"].map((label) => (
+                  <div key={label} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-aa-bg border border-aa-border">
+                    <div className="w-2 h-2 rounded-full bg-aa-success" />
+                    <span className="text-[11px] font-mono text-aa-text-dim">{label}</span>
+                  </div>
+                ))}
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-aa-bg border border-aa-border">
                   <div className="w-2 h-2 rounded-full bg-aa-text-dim" />
                   <span className="text-[11px] font-mono text-aa-text-dim">Max 50 MB</span>
@@ -194,9 +233,6 @@ export default function UploadPage(): JSX.Element {
           )}
         </div>
 
-        {/* Corner accents — four absolutely-positioned corner brackets that
-            frame the drop zone, giving it a "targeting reticle" aesthetic
-            consistent with the sports-tech visual language of the app. */}
         <div className="absolute top-3 left-3 w-4 h-4 border-t-2 border-l-2 border-aa-accent/30 rounded-tl" />
         <div className="absolute top-3 right-3 w-4 h-4 border-t-2 border-r-2 border-aa-accent/30 rounded-tr" />
         <div className="absolute bottom-3 left-3 w-4 h-4 border-b-2 border-l-2 border-aa-accent/30 rounded-bl" />
@@ -215,50 +251,95 @@ export default function UploadPage(): JSX.Element {
                 {files.length}
               </span>
             </div>
-            <button className="px-4 py-1.5 rounded-lg bg-aa-accent text-aa-bg text-xs font-bold tracking-wider uppercase hover:bg-aa-accent/90 transition-colors">
-              Process All
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                processAll();
+              }}
+              disabled={isProcessing || files.every((f) => f.status !== "ready")}
+              className="px-4 py-1.5 rounded-lg bg-aa-accent text-aa-bg text-xs font-bold tracking-wider uppercase hover:bg-aa-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isProcessing ? "Processing..." : "Process All"}
             </button>
           </div>
           <div className="divide-y divide-aa-border/50">
             {files.map((file, i) => (
-              <div
-                key={`${file.name}-${i}`}
-                className="flex items-center gap-4 px-5 py-3 hover:bg-aa-elevated/30 transition-colors opacity-0 animate-slide-in-left"
-                // Stagger: starts 300ms after the queue container appears,
-                // then each file enters 60ms after the previous one.
-                style={{ animationDelay: `${300 + i * 60}ms` }}
-              >
-                {/* File icon */}
-                <div className="w-9 h-9 rounded-lg bg-aa-accent/10 border border-aa-accent/20 flex items-center justify-center flex-shrink-0">
-                  <span className="text-[10px] font-mono font-bold text-aa-accent">CSV</span>
-                </div>
-                {/* File info */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-aa-text truncate">{file.name}</p>
-                  <p className="text-[11px] font-mono text-aa-text-dim">{formatSize(file.size)}</p>
-                </div>
-                {/* Status */}
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-aa-success" />
-                  <span className="text-[11px] font-mono text-aa-text-secondary capitalize">
-                    {file.status}
-                  </span>
-                </div>
-                {/* Remove button — e.stopPropagation() prevents the click from
-                    bubbling up to the dropzone's getRootProps() click handler,
-                    which would open the file picker when the user intends to
-                    remove a file from the queue. */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setFiles((prev) => prev.filter((_, idx) => idx !== i));
-                  }}
-                  className="p-1 rounded hover:bg-aa-danger/10 text-aa-text-dim hover:text-aa-danger transition-colors"
+              <div key={`${file.name}-${i}`}>
+                <div
+                  className="flex items-center gap-4 px-5 py-3 hover:bg-aa-elevated/30 transition-colors opacity-0 animate-slide-in-left"
+                  style={{ animationDelay: `${300 + i * 60}ms` }}
                 >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                  </svg>
-                </button>
+                  {/* File icon */}
+                  <div className="w-9 h-9 rounded-lg bg-aa-accent/10 border border-aa-accent/20 flex items-center justify-center flex-shrink-0">
+                    <span className="text-[10px] font-mono font-bold text-aa-accent">CSV</span>
+                  </div>
+                  {/* File info */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-aa-text truncate">{file.name}</p>
+                    <p className="text-[11px] font-mono text-aa-text-dim">{formatSize(file.size)}</p>
+                  </div>
+                  {/* Status */}
+                  <div className="flex items-center gap-2">
+                    {statusIcon(file.status)}
+                    <span className="text-[11px] font-mono text-aa-text-secondary capitalize">
+                      {file.status === "uploading" ? "processing" : file.status}
+                    </span>
+                  </div>
+                  {/* Remove button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFiles((prev) => prev.filter((_, idx) => idx !== i));
+                    }}
+                    className="p-1 rounded hover:bg-aa-danger/10 text-aa-text-dim hover:text-aa-danger transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                {/* Result details (shown after processing) */}
+                {file.status === "complete" && file.result && (
+                  <div className="px-5 pb-3 pl-[68px]">
+                    <div className="flex flex-wrap gap-3">
+                      <span className="px-2 py-0.5 rounded bg-aa-accent/10 text-[10px] font-mono font-bold text-aa-accent">
+                        {CSV_TYPE_LABELS[file.result.csvType] ?? file.result.csvType}
+                      </span>
+                      <span className="text-[11px] font-mono text-aa-text-dim">
+                        {file.result.playersFound} players
+                      </span>
+                      <span className="text-[11px] font-mono text-aa-text-dim">
+                        {file.result.rowsInserted}/{file.result.rowsParsed} rows inserted
+                      </span>
+                      <span className="text-[11px] font-mono text-aa-text-dim">
+                        {file.result.mappedColumns} columns mapped
+                      </span>
+                    </div>
+                    {file.result.unmappedHeaders.length > 0 && (
+                      <p className="text-[10px] font-mono text-aa-text-dim mt-1">
+                        Unmapped headers: {file.result.unmappedHeaders.join(", ")}
+                      </p>
+                    )}
+                    {file.result.skippedRows.length > 0 && (
+                      <p className="text-[10px] font-mono text-aa-warning mt-1">
+                        {file.result.skippedRows.length} rows skipped
+                      </p>
+                    )}
+                    {file.result.insertErrors.length > 0 && (
+                      <p className="text-[10px] font-mono text-aa-danger mt-1">
+                        Insert errors: {file.result.insertErrors.join("; ")}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Error details */}
+                {file.status === "error" && file.error && (
+                  <div className="px-5 pb-3 pl-[68px]">
+                    <p className="text-[11px] font-mono text-aa-danger">{file.error}</p>
+                  </div>
+                )}
               </div>
             ))}
           </div>
