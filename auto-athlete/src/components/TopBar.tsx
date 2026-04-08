@@ -11,7 +11,77 @@
  */
 "use client";
 
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+
+interface PlayerSearchItem {
+  id: string;
+  name: string;
+  position: string | null;
+}
+
 export default function TopBar(): JSX.Element {
+  const router = useRouter();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState("");
+  const [players, setPlayers] = useState<PlayerSearchItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    // Keyboard shortcut parity with command palette UX.
+    function handleShortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        inputRef.current?.focus();
+        setIsOpen(true);
+      }
+    }
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, []);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setPlayers([]);
+      return;
+    }
+
+    // Small debounce keeps query responsive and reduces Supabase calls.
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      const { data } = await supabase
+        .from("players")
+        .select("id, name, position")
+        .ilike("name", `%${q}%`)
+        .order("name", { ascending: true })
+        .limit(8);
+      setPlayers((data ?? []) as PlayerSearchItem[]);
+      setLoading(false);
+      setIsOpen(true);
+    }, 180);
+
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const topMatch = useMemo(() => players[0] ?? null, [players]);
+
+  function goToPlayer(playerId: string): void {
+    setQuery("");
+    setPlayers([]);
+    setIsOpen(false);
+    router.push(`/dashboard/players/${playerId}`);
+  }
+
+  function onSubmit(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    if (topMatch) {
+      goToPlayer(topMatch.id);
+    }
+  }
+
   return (
     /**
      * `sticky top-0` pins the header while main content scrolls beneath it.
@@ -42,15 +112,49 @@ export default function TopBar(): JSX.Element {
 
       {/* ── Right: Quick actions ──────────────────────────── */}
       <div className="flex items-center gap-3">
-        {/* Search — visual hint only; no keyboard handler is wired up yet.
-            The Cmd+K shortcut signals intent for a future command-palette feature. */}
-        <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-aa-border bg-aa-bg/50 text-aa-text-dim hover:text-aa-text hover:border-aa-border-bright transition-all text-xs font-mono">
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-          </svg>
-          Search players...
-          <kbd className="ml-2 px-1.5 py-0.5 rounded bg-aa-elevated border border-aa-border text-[10px]">⌘K</kbd>
-        </button>
+        <div className="relative">
+          <form
+            onSubmit={onSubmit}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-aa-border bg-aa-bg/50 text-aa-text-dim hover:border-aa-border-bright transition-all text-xs font-mono w-[250px]"
+          >
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+            </svg>
+            <input
+              ref={inputRef}
+              value={query}
+              onFocus={() => setIsOpen(true)}
+              onBlur={() => setTimeout(() => setIsOpen(false), 120)}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search player..."
+              className="w-full bg-transparent text-aa-text placeholder:text-aa-text-dim focus:outline-none"
+            />
+            <kbd className="ml-1 px-1.5 py-0.5 rounded bg-aa-elevated border border-aa-border text-[10px]">⌘K</kbd>
+          </form>
+
+          {isOpen && (query.trim().length >= 2 || players.length > 0) && (
+            <div className="absolute right-0 mt-2 w-[340px] rounded-lg border border-aa-border bg-aa-surface shadow-xl overflow-hidden z-50">
+              {loading && (
+                <p className="px-3 py-2 text-xs text-aa-text-secondary">Searching...</p>
+              )}
+              {!loading && players.length === 0 && (
+                <p className="px-3 py-2 text-xs text-aa-text-secondary">No players found.</p>
+              )}
+              {!loading &&
+                players.map((player) => (
+                  <button
+                    key={player.id}
+                    type="button"
+                    onMouseDown={() => goToPlayer(player.id)}
+                    className="w-full px-3 py-2 text-left hover:bg-aa-elevated/70 transition-colors border-b border-aa-border/30 last:border-b-0"
+                  >
+                    <p className="text-xs font-semibold text-aa-text">{player.name}</p>
+                    <p className="text-[11px] text-aa-text-dim">{player.position ?? "—"}</p>
+                  </button>
+                ))}
+            </div>
+          )}
+        </div>
 
         {/* Notification bell with unread indicator */}
         <button className="relative p-2 rounded-lg border border-aa-border bg-aa-bg/50 text-aa-text-dim hover:text-aa-text hover:border-aa-border-bright transition-all">

@@ -156,7 +156,9 @@ export default function Sidebar(): JSX.Element {
           // Exact match — `/dashboard/players` will NOT highlight "Dashboard".
           // This is intentional for a flat nav structure where each link
           // represents a distinct, non-nested section.
-          const isActive = pathname === item.href;
+          const isActive = item.href === "/dashboard"
+            ? pathname === item.href
+            : pathname === item.href || pathname.startsWith(`${item.href}/`);
           return (
             <Link
               key={item.href}
