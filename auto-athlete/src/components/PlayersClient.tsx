@@ -65,10 +65,11 @@ export default function PlayersClient({ players, reportData }: PlayersClientProp
       if (normalized && !player.name.toLowerCase().includes(normalized)) {
         return false;
       }
-      if (group === "all") return true;
-      const groupLabel = getPositionGroupLabel(player.position);
-      if (group === "skills" && groupLabel !== "Skills / Mids") return false;
-      if (group === "bigs" && groupLabel !== "Bigs") return false;
+      if (group !== "all") {
+        const groupLabel = getPositionGroupLabel(player.position);
+        if (group === "skills" && groupLabel !== "Skills / Mids") return false;
+        if (group === "bigs" && groupLabel !== "Bigs") return false;
+      }
 
       // Data-availability is explicitly separated from readiness state.
       const hasData = player.latestSessionDate != null;

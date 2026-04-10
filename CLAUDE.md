@@ -443,6 +443,102 @@ When a player is in `rehab` or `return_to_play` status, their Player Profile pag
 - Metrics to compare (same four groups as the % of baseline view): GPS load metrics, CNS output metrics, hip strength metrics, hamstring metrics.
 - Add a **trend line** view toggled from the same panel: shows the rehab player's metric trajectory over the past 4 weeks plotted against the position group's rolling average for the same period — so Brian can see if the gap is closing.
 
+### AI Chat Assistant (Gemma 4)
+
+An LLM-powered chat panel where Brian can ask natural language questions about athlete data. The model (Google Gemma 4 via Google AI Studio) calls existing query functions as tools, fetches live Supabase data, and streams answers back.
+
+**Model:** Gemma 4 (native function-calling via special tokens, 256K context, Apache 2.0)
+**Host:** Google AI Studio (free tier, `generateContent` / `streamGenerateContent` REST API)
+**UI:** 420px slide-out panel on the right, accessible from TopBar
+
+#### Phase 1 — Backend Foundation
+
+Goal: A working `/api/chat` route that round-trips a message through Gemma 4 and returns a response. No tools, no streaming — just proving the LLM connection works.
+
+- [ ] **1.1** Add `GEMMA_API_KEY` and `GEMMA_MODEL_ID` to `.env.local` (server-only, no `NEXT_PUBLIC_` prefix)
+- [ ] **1.2** Create `src/lib/chat-types.ts` — shared TypeScript types: `ChatRole`, `ChatMessage`, `ToolCall`, `ToolResult`, `ChatRequest`, `ChatResponse`, `ToolDefinition`
+- [ ] **1.3** Create `src/lib/gemma.ts` — LLM client wrapper using raw `fetch` against Google AI Studio `generateContent` endpoint. Export `chatCompletion(messages, tools?)`. Handle 429/5xx with a single retry after 1s
+- [ ] **1.4** Create `src/app/api/chat/route.ts` — POST endpoint accepting `{ messages }`, calls `chatCompletion()`, returns `NextResponse.json({ reply })`
+- [ ] **1.5** Test manually with curl: `curl -X POST http://localhost:3000/api/chat -H 'Content-Type: application/json' -d '{"messages":[{"role":"user","content":"Hello"}]}'`
+
+#### Phase 2 — Tool Definitions
+
+Goal: Wrap existing query functions as callable tools so the LLM can fetch live data from Supabase. Test via curl — no UI yet.
+
+- [ ] **2.1** Create `src/lib/chat-tools.ts` with tool schema definitions (JSON Schema format for Google AI function calling):
+  - `get_dashboard_data` → `getDashboardData(date?)` from `src/lib/queries.ts`
+  - `get_available_session_dates` → `getAvailableSessionDates()` from `src/lib/queries.ts`
+  - `get_players_list` → `getPlayersList()` from `src/lib/player-queries.ts`
+  - `get_player_profile` → `getPlayerProfile(playerId)` from `src/lib/player-queries.ts`
+  - `get_position_report` → `getPositionReportData(date?)` from `src/lib/group-queries.ts`
+  - `get_grouped_daily_metrics` → `getGroupedDailyMetrics(date, group)` from `src/lib/group-queries.ts`
+  - `get_grouped_weekly_sums` → `getGroupedWeeklySums(weekStart, group)` from `src/lib/group-queries.ts`
+- [ ] **2.2** Implement `executeTool(name, args)` dispatcher in `chat-tools.ts` — switch on tool name, call the corresponding query function, JSON.stringify the result (truncate at 15K chars if needed)
+- [ ] **2.3** Update `gemma.ts` to pass tool definitions in the Google AI Studio `tools` field
+- [ ] **2.4** Update `api/chat/route.ts` with the tool-call loop: send → if tool_calls, execute each → append results → re-send (max 5 iterations) → return final text reply
+- [ ] **2.5** Test: ask "What was the team average total distance on the most recent session?" via curl — should call `get_dashboard_data` and return a natural-language answer
+- [ ] **2.6** Test multi-tool: ask "Show me the profile for the player with the most flags" — should call `get_players_list` then `get_player_profile`
+
+#### Phase 3 — Chat UI
+
+Goal: A slide-out chat panel in the dashboard. Brian can type a question and see an answer (no streaming yet — full response appears at once).
+
+- [ ] **3.1** Add `slide-in-right` keyframe + animation to `tailwind.config.ts` (mirrors existing `slide-in-left`)
+- [ ] **3.2** Create `src/components/ChatMessage.tsx` — user messages (right-aligned, cyan-tinted) and assistant messages (left-aligned, elevated surface). Loading state with pulse animation. Basic text formatting (bold, line breaks, lists)
+- [ ] **3.3** Create `src/components/ChatInput.tsx` — auto-growing textarea, send on Enter (Shift+Enter for newline), disabled state while loading, send button with arrow icon
+- [ ] **3.4** Create `src/components/ChatPanel.tsx` — fixed right panel (420px, z-50), header with title + close button, scrollable message area (auto-scroll to bottom), ChatInput pinned to bottom, semi-transparent backdrop overlay
+- [ ] **3.5** Create `src/lib/chat-context.ts` + `src/components/ChatProvider.tsx` — React context providing `{ isChatOpen, toggleChat }` so TopBar and ChatPanel can share state
+- [ ] **3.6** Modify `src/components/TopBar.tsx` — add chat toggle button (chat bubble icon) between notification bell and avatar
+- [ ] **3.7** Modify `src/app/dashboard/layout.tsx` — wrap content in `<ChatProvider>`, render `<ChatPanel />` alongside existing layout
+- [ ] **3.8** Test end-to-end: open dashboard → click chat button → type "How many players are on the roster?" → verify answer appears
+
+#### Phase 4 — System Prompt & Domain Context
+
+Goal: Make the LLM's answers genuinely useful for an S&C coach by giving it deep domain knowledge.
+
+- [ ] **4.1** Create `src/lib/system-prompt.ts` — system prompt covering:
+  - Identity: AI assistant for Auto Athlete, user is S&C coach Brian Kish
+  - Data sources: GPS (StatSports), force plate (CMJ), force frame (hip AD/AB), NordBord (hamstring)
+  - Key metrics + formulas: EWMA (λ=0.28), HSBI, Momentum, ACWR, z-scores
+  - Position groups: Skills/Mids vs Bigs and their metric focus areas
+  - Flag thresholds: sprint recency (7d/10d), EWMA deviation (>1 SD), output z < −1.5, asymmetry > 10%
+  - Player status effects: injured/rehab excluded from flags, RTP uses pre-injury baseline
+  - Response formatting: use player names not IDs, include units, round appropriately
+- [ ] **4.2** Export `buildSystemPrompt()` that dynamically injects today's date and the most recent session date
+- [ ] **4.3** Update `api/chat/route.ts` to prepend system prompt as first message in every request
+- [ ] **4.4** Test domain questions: "Which players have sprint recency flags?", "What's the team ACWR?", "Is anyone at risk for hamstring injury?"
+
+#### Phase 5 — Streaming & Polish
+
+Goal: Stream responses token-by-token for responsive feel. Add error handling, markdown rendering, and visual refinements.
+
+- [ ] **5.1** Add `chatCompletionStream()` to `gemma.ts` using Google AI Studio `streamGenerateContent` endpoint. Tool calls run non-streamed; only the final text response streams
+- [ ] **5.2** Update `api/chat/route.ts` to return SSE stream (`text/event-stream`) with `data: {"token":"..."}\n\n` events and `data: [DONE]\n\n` terminator
+- [ ] **5.3** Update `ChatPanel.tsx` to consume stream via `response.body.getReader()`, updating assistant message content incrementally. Show "Thinking..." during tool-call execution
+- [ ] **5.4** Improve `ChatMessage.tsx` — basic markdown rendering (`**bold**`, line breaks, bullet/numbered lists), copy button on assistant messages, blinking cursor while streaming
+- [ ] **5.5** Error handling UI — error message bubble (`border-aa-danger`), retry button that re-sends last user message
+- [ ] **5.6** Visual polish — gradient header on panel, noise-overlay texture, `transition-transform duration-300` open/close, keyboard shortcut `Cmd+J` to toggle panel
+
+#### Phase 6 — Advanced Features
+
+Goal: Quality-of-life features. Each sub-phase is independent — implement in any order.
+
+**6A — Suggested Questions**
+- [ ] **6A.1** Create `src/lib/chat-suggestions.ts` — categorized question arrays (general, player-specific, fatigue, position groups). Export `getSuggestions(hasMessages)` returning different suggestions for empty vs mid-conversation states
+- [ ] **6A.2** Create `src/components/SuggestedQuestions.tsx` — horizontal scrollable row of pill-shaped chips, clickable to send
+- [ ] **6A.3** Integrate into `ChatPanel.tsx` — starter suggestions in empty state, contextual follow-ups after first exchange
+
+**6B — Conversation Persistence**
+- [ ] **6B.1** Persist messages to `sessionStorage` in `ChatPanel.tsx` — survives page navigation, clears on tab close. Add "Clear conversation" button in chat header
+
+**6C — Inline Data Cards**
+- [ ] **6C.1** Define `:::player-card` and `:::metric-card` markers in system prompt for structured data blocks
+- [ ] **6C.2** Parse markers in `ChatMessage.tsx` — render mini player cards (reuse `PlayerStatusBadge.tsx`) and KPI-style metric cards inline in chat, clickable to navigate
+
+**6D — Page-Context Awareness**
+- [ ] **6D.1** In `ChatPanel.tsx`, detect current route via `usePathname()` and pass as context to the API (`{ messages, context: { page, playerId? } }`)
+- [ ] **6D.2** Update `api/chat/route.ts` to incorporate page context into the system prompt dynamically
+
 CODING STYLE REQUIREMENTS:
 
 - Always add comments or the equivalent of type-hints from Python.
