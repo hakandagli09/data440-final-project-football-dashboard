@@ -8,6 +8,8 @@
  */
 
 import Sidebar from "@/components/Sidebar";
+import ChatPanel from "@/components/ChatPanel";
+import ChatProvider from "@/components/ChatProvider";
 import TopBar from "@/components/TopBar";
 
 /** Props for the upload layout wrapper. */
@@ -25,13 +27,16 @@ interface UploadLayoutProps {
  */
 export default function UploadLayout({ children }: UploadLayoutProps) {
   return (
-    <div className="min-h-screen bg-aa-bg noise-overlay">
-      <Sidebar />
-      {/* ml-[220px] offsets content past the fixed sidebar width */}
-      <div className="ml-[220px] relative z-10">
-        <TopBar />
-        <main className="p-6">{children}</main>
+    <ChatProvider>
+      <div className="min-h-screen bg-aa-bg noise-overlay">
+        <Sidebar />
+        {/* ml-[220px] offsets content past the fixed sidebar width */}
+        <div className="ml-[220px] relative z-10">
+          <TopBar />
+          <main className="p-6">{children}</main>
+        </div>
+        <ChatPanel />
       </div>
-    </div>
+    </ChatProvider>
   );
 }

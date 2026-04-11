@@ -9,6 +9,8 @@
 
 import Sidebar from "@/components/Sidebar";
 import TopBar from "@/components/TopBar";
+import ChatPanel from "@/components/ChatPanel";
+import ChatProvider from "@/components/ChatProvider";
 
 /** Props for the dashboard layout wrapper. */
 interface DashboardLayoutProps {
@@ -29,13 +31,16 @@ interface DashboardLayoutProps {
  */
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   return (
-    <div className="min-h-screen bg-aa-bg noise-overlay">
-      <Sidebar />
-      {/* ml-[220px] offsets content past the fixed sidebar width */}
-      <div className="ml-[220px] relative z-10">
-        <TopBar />
-        <main className="p-6">{children}</main>
+    <ChatProvider>
+      <div className="min-h-screen bg-aa-bg noise-overlay">
+        <Sidebar />
+        {/* ml-[220px] offsets content past the fixed sidebar width */}
+        <div className="ml-[220px] relative z-10">
+          <TopBar />
+          <main className="p-6">{children}</main>
+        </div>
+        <ChatPanel />
       </div>
-    </div>
+    </ChatProvider>
   );
 }

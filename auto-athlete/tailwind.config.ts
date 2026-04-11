@@ -47,6 +47,7 @@ const config: Config = {
         "fade-in": "fade-in 0.5s ease-out forwards",
         "slide-up": "slide-up 0.5s ease-out forwards",
         "slide-in-left": "slide-in-left 0.3s ease-out forwards",
+        "slide-in-right": "slide-in-right 0.24s cubic-bezier(0.23, 1, 0.32, 1) forwards",
         "count-up": "count-up 1s ease-out forwards",
       },
       keyframes: {
@@ -64,6 +65,10 @@ const config: Config = {
         },
         "slide-in-left": {
           from: { opacity: "0", transform: "translateX(-12px)" },
+          to: { opacity: "1", transform: "translateX(0)" },
+        },
+        "slide-in-right": {
+          from: { opacity: "0", transform: "translateX(16px)" },
           to: { opacity: "1", transform: "translateX(0)" },
         },
         "count-up": {

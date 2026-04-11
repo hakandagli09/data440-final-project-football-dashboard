@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { useChat } from "@/lib/chat-context";
 
 interface PlayerSearchItem {
   id: string;
@@ -23,6 +24,7 @@ interface PlayerSearchItem {
 
 export default function TopBar(): JSX.Element {
   const router = useRouter();
+  const { toggleChat } = useChat();
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [players, setPlayers] = useState<PlayerSearchItem[]>([]);
@@ -165,6 +167,17 @@ export default function TopBar(): JSX.Element {
               Hardcoded as visible; in production this would be conditionally
               rendered based on notification state from the backend. */}
           <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-aa-warm" />
+        </button>
+
+        <button
+          type="button"
+          onClick={toggleChat}
+          className="relative p-2 rounded-lg border border-aa-border bg-aa-bg/50 text-aa-text-dim hover:text-aa-text hover:border-aa-border-bright transition-all duration-150 ease-out active:scale-[0.97]"
+          aria-label="Open AI chat"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.76c0 1.6.84 3.02 2.11 3.82.34.22.6.55.66.95l.22 1.42c.06.42.54.66.9.44l1.54-.93c.34-.2.75-.25 1.13-.13a12.04 12.04 0 0 0 3.17.42c5.38 0 9.75-3.58 9.75-8s-4.37-8-9.75-8-9.73 3.58-9.73 8Z" />
+          </svg>
         </button>
 
         {/* User avatar — "SC" stands for "S&C Coach" (Strength & Conditioning Coach),
