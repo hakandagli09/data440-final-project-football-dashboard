@@ -15,9 +15,16 @@ interface UiMessage {
 }
 
 const SESSION_STORAGE_KEY = "auto-athlete-chat-messages";
+const MAX_AUTO_RETRIES = 1;
 
 function createMessageId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function parseSseEvents(buffer: string): {
@@ -47,6 +54,7 @@ export default function ChatPanel(): JSX.Element | null {
   const [draft, setDraft] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const [lastRequestMessages, setLastRequestMessages] = useState<UiMessage[] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -90,12 +98,16 @@ export default function ChatPanel(): JSX.Element | null {
     );
   }
 
-  async function streamAssistantReply(requestMessages: UiMessage[]): Promise<void> {
+  async function streamAssistantReply(
+    requestMessages: UiMessage[],
+    retryCount: number = 0
+  ): Promise<void> {
     const assistantMessageId = createMessageId();
     setLastRequestMessages(requestMessages);
     setStreamingMessageId(assistantMessageId);
     setIsLoading(true);
     setError(null);
+    setStatusNotice(null);
     setMessages([...requestMessages, { id: assistantMessageId, role: "assistant", content: "" }]);
 
     try {
@@ -146,10 +158,19 @@ export default function ChatPanel(): JSX.Element | null {
             continue;
           }
 
-          const payload = JSON.parse(event) as { token?: string; error?: string };
+          const payload = JSON.parse(event) as {
+            token?: string;
+            error?: string;
+            rateLimited?: boolean;
+            retryAfterMs?: number;
+          };
 
           if (payload.error) {
-            throw new Error(payload.error);
+            const rateLimitError = Object.assign(new Error(payload.error), {
+              rateLimited: payload.rateLimited ?? false,
+              retryAfterMs: payload.retryAfterMs ?? 0,
+            });
+            throw rateLimitError;
           }
 
           if (payload.token) {
@@ -167,6 +188,23 @@ export default function ChatPanel(): JSX.Element | null {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unexpected error";
+      const retryAfterMs =
+        typeof (err as { retryAfterMs?: unknown })?.retryAfterMs === "number"
+          ? ((err as { retryAfterMs?: number }).retryAfterMs ?? 0)
+          : 0;
+      const isRateLimited =
+        (err as { rateLimited?: unknown })?.rateLimited === true;
+
+      if (isRateLimited && retryCount < MAX_AUTO_RETRIES) {
+        const waitMs = Math.max(retryAfterMs, 1500);
+        setStatusNotice(`Rate limited. Retrying in ${Math.ceil(waitMs / 1000)}s...`);
+        await sleep(waitMs);
+        setMessages((current) => current.filter((item) => item.id !== assistantMessageId));
+        setStatusNotice(null);
+        await streamAssistantReply(requestMessages, retryCount + 1);
+        return;
+      }
+
       setMessages((current) => {
         const assistantMessage = current.find((item) => item.id === assistantMessageId);
         if (!assistantMessage || assistantMessage.content.trim().length === 0) {
@@ -176,6 +214,7 @@ export default function ChatPanel(): JSX.Element | null {
       });
       setError(message);
     } finally {
+      setStatusNotice((current) => (current?.includes("Retrying") ? current : null));
       setStreamingMessageId(null);
       setIsLoading(false);
     }
@@ -206,6 +245,7 @@ export default function ChatPanel(): JSX.Element | null {
 
     setMessages([]);
     setError(null);
+    setStatusNotice(null);
     setDraft("");
     setLastRequestMessages(null);
     setStreamingMessageId(null);
@@ -275,6 +315,13 @@ export default function ChatPanel(): JSX.Element | null {
               <p className="mt-2 text-aa-text-secondary">
                 The assistant now sees the current route and can use structured cards when helpful.
               </p>
+            </div>
+          )}
+
+          {statusNotice && (
+            <div className="rounded-2xl border border-aa-warning/40 bg-aa-warning/10 px-4 py-3 text-sm text-aa-text">
+              <p className="font-semibold text-aa-warning">Assistant status</p>
+              <p className="mt-1 text-aa-text-secondary">{statusNotice}</p>
             </div>
           )}
 

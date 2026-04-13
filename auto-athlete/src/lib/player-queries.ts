@@ -58,6 +58,20 @@ export interface PlayerProfileData {
   flags: string[];
 }
 
+export interface RosterCountData {
+  totalPlayers: number;
+  playersWithGpsData: number;
+  playersWithoutGpsData: number;
+  statusCounts: Record<PlayerStatus, number>;
+}
+
+export interface PlayerNameSearchResult {
+  query: string;
+  matchCount: number;
+  exactMatch: PlayerListItem | null;
+  matches: PlayerListItem[];
+}
+
 type GpsRow = {
   player_id: string;
   session_date: string;
@@ -258,6 +272,74 @@ export async function getPlayersList(): Promise<PlayerListItem[]> {
   }
 
   return out;
+}
+
+export async function getRosterCount(): Promise<RosterCountData> {
+  const players = await getPlayersList();
+  const statusCounts: Record<PlayerStatus, number> = {
+    injured: 0,
+    rehab: 0,
+    return_to_play: 0,
+    cleared: 0,
+  };
+
+  for (const player of players) {
+    statusCounts[player.status] += 1;
+  }
+
+  const playersWithGpsData = players.filter((player) => player.latestSessionDate != null).length;
+
+  return {
+    totalPlayers: players.length,
+    playersWithGpsData,
+    playersWithoutGpsData: players.length - playersWithGpsData,
+    statusCounts,
+  };
+}
+
+export async function findPlayersByName(query: string): Promise<PlayerNameSearchResult> {
+  const trimmedQuery = query.trim();
+  if (trimmedQuery.length === 0) {
+    return {
+      query: "",
+      matchCount: 0,
+      exactMatch: null,
+      matches: [],
+    };
+  }
+
+  const normalizedQuery = trimmedQuery.toLowerCase();
+  const players = await getPlayersList();
+  const exactMatch =
+    players.find((player) => player.name.trim().toLowerCase() === normalizedQuery) ?? null;
+  const partialMatches = players.filter((player) =>
+    player.name.trim().toLowerCase().includes(normalizedQuery)
+  );
+
+  const rankedMatches = [
+    ...(exactMatch ? [exactMatch] : []),
+    ...partialMatches.filter((player) => player.id !== exactMatch?.id),
+  ].slice(0, 5);
+
+  return {
+    query: trimmedQuery,
+    matchCount: partialMatches.length,
+    exactMatch,
+    matches: rankedMatches,
+  };
+}
+
+export async function getPlayersByStatus(
+  status: PlayerStatus
+): Promise<{ status: PlayerStatus; count: number; players: PlayerListItem[] }> {
+  const players = await getPlayersList();
+  const filteredPlayers = players.filter((player) => player.status === status);
+
+  return {
+    status,
+    count: filteredPlayers.length,
+    players: filteredPlayers,
+  };
 }
 
 export async function getPlayerProfile(playerId: string): Promise<PlayerProfileData | null> {
