@@ -30,10 +30,13 @@ import type { ToolDefinition, ToolResult } from "@/lib/chat-types";
 type GroupFilter = "skills_mids" | "bigs";
 type SortDirection = "asc" | "desc";
 
-/** Keep tool payloads small to stay within Groq free-tier TPM limits. */
-const MAX_TOOL_RESULT_CHARS = 2200;
-const MAX_RESULT_LIST_ITEMS = 8;
-const MAX_STRING_PREVIEW_CHARS = 180;
+/** Keep tool payloads small to stay within Groq free-tier TPM limits.
+ *  Profile payloads need a higher budget so required-metrics + fatigue
+ *  data don't get silently truncated. */
+const MAX_TOOL_RESULT_CHARS = 4000;
+const MAX_TOOL_RESULT_CHARS_PROFILE = 6000;
+const MAX_RESULT_LIST_ITEMS = 12;
+const MAX_STRING_PREVIEW_CHARS = 220;
 const EXACT_TOOL_CACHE_TTL_MS = 60 * 1000;
 
 type CachedToolEntry = {
@@ -246,10 +249,10 @@ function compactToolValue(value: unknown): unknown {
   );
 }
 
-function stringifyToolResult(value: unknown): string {
+function stringifyToolResult(value: unknown, maxChars: number = MAX_TOOL_RESULT_CHARS): string {
   const compactPayload = { data: compactToolValue(value) };
   const compactRaw = JSON.stringify(compactPayload, null, 2);
-  if (compactRaw.length <= MAX_TOOL_RESULT_CHARS) {
+  if (compactRaw.length <= maxChars) {
     return compactRaw;
   }
 
@@ -259,7 +262,7 @@ function stringifyToolResult(value: unknown): string {
     data: compactToolValue(value),
   };
   const summarizedRaw = JSON.stringify(summarizedPayload, null, 2);
-  if (summarizedRaw.length <= MAX_TOOL_RESULT_CHARS) {
+  if (summarizedRaw.length <= maxChars) {
     return summarizedRaw;
   }
 
@@ -519,7 +522,7 @@ export const chatToolDefinitions: ToolDefinition[] = [
   {
     name: "query_analytics_view",
     description:
-      "Query one approved read-only analytics view with strict filters, column selection, ordering, and row limits.",
+      "Query one approved read-only analytics view with strict filters, column selection, ordering, and row limits. Views: chat_players (roster+flags), chat_gps_daily (GPS metrics incl. hml_distance, hmld_per_minute, fatigue_index, lower_speed_loading), chat_jump_latest (CMJ metrics + asymmetry %), chat_risk_signals (sprint recency, jump output, groin/hamstring force, asymmetry, flag_count).",
     parameters: createObjectSchema(
       {
         view: {
@@ -650,7 +653,10 @@ export async function executeTool(
       throw new Error(`Unknown chat tool: ${name}`);
   }
 
-  const serializedResult = stringifyToolResult(result);
+  const charBudget = name === "get_player_profile"
+    ? MAX_TOOL_RESULT_CHARS_PROFILE
+    : MAX_TOOL_RESULT_CHARS;
+  const serializedResult = stringifyToolResult(result, charBudget);
   setCachedToolResult(name, args, serializedResult);
 
   return {

@@ -435,6 +435,10 @@ SELECT
   SUM(COALESCE(g.accelerations_zone_4_6, 0) + COALESCE(g.decelerations_zone_4_6, 0))::real AS accel_decel,
   SUM(COALESCE(g.hml_efforts, 0))::real AS hml_efforts,
   SUM(COALESCE(g.collision_load, 0))::real AS collision_load,
+  SUM(COALESCE(g.hml_distance, 0))::real AS hml_distance,
+  AVG(COALESCE(g.hmld_per_minute, 0))::real AS hmld_per_minute,
+  AVG(COALESCE(g.fatigue_index, 0))::real AS fatigue_index,
+  SUM(COALESCE(g.lower_speed_loading, 0))::real AS lower_speed_loading,
   MAX(COALESCE(g.max_speed, 0))::real AS max_speed,
   MAX(COALESCE(g.pct_max_speed, 0))::real AS pct_max_speed
 FROM gps_sessions g
@@ -468,7 +472,12 @@ latest_jump AS (
     j.eccentric_braking_impulse,
     j.eccentric_deceleration_rfd,
     j.eccentric_duration_ms,
-    j.countermovement_depth_cm
+    j.countermovement_depth_cm,
+    j.concentric_mean_force_asym,
+    j.eccentric_braking_impulse_asym,
+    j.eccentric_decel_rfd_asym,
+    j.eccentric_peak_force_asym,
+    j.braking_phase_duration_ms
   FROM jump_tests j
   JOIN players p ON p.id = j.player_id
   ORDER BY j.player_id, j.test_date DESC, j.created_at DESC
@@ -496,7 +505,12 @@ SELECT
   latest_jump.eccentric_braking_impulse,
   latest_jump.eccentric_deceleration_rfd,
   latest_jump.eccentric_duration_ms,
-  latest_jump.countermovement_depth_cm
+  latest_jump.countermovement_depth_cm,
+  latest_jump.concentric_mean_force_asym,
+  latest_jump.eccentric_braking_impulse_asym,
+  latest_jump.eccentric_decel_rfd_asym,
+  latest_jump.eccentric_peak_force_asym,
+  latest_jump.braking_phase_duration_ms
 FROM latest_jump
 LEFT JOIN latest_status ON latest_status.player_id = latest_jump.player_id;
 
@@ -578,6 +592,12 @@ SELECT
   END AS days_since_85,
   chat_jump_latest.jump_height_cm,
   chat_jump_latest.rsi_modified,
+  chat_jump_latest.concentric_peak_force_per_bm,
+  chat_jump_latest.eccentric_braking_impulse,
+  chat_jump_latest.eccentric_deceleration_rfd,
+  chat_jump_latest.eccentric_duration_ms,
+  chat_jump_latest.countermovement_depth_cm,
+  chat_jump_latest.braking_phase_duration_ms,
   latest_force_frame.groin_squeeze_force,
   latest_nordbord.hamstring_iso_force,
   latest_force_frame.force_frame_asymmetry_pct,

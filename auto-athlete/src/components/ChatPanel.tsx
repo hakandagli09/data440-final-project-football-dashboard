@@ -220,8 +220,9 @@ export default function ChatPanel(): JSX.Element | null {
     }
   }
 
-  async function sendMessage(contentOverride?: string): Promise<void> {
-    const content = (contentOverride ?? draft).trim();
+  async function sendMessage(contentOverride?: string | unknown): Promise<void> {
+    const override = typeof contentOverride === "string" ? contentOverride : undefined;
+    const content = (override ?? draft).trim();
     if (!content || isLoading) return;
 
     const userMessage: UiMessage = {
