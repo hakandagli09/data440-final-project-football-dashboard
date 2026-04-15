@@ -1,0 +1,6 @@
+API KEY: AIzaSyD-xm5uBdc-SWyPpNQW-jbKT15ywNmeH8E
+Name: Tribe Football Dashboard 2026
+Project name: projects/766410733916
+Project number: 766410733916
+Project id: gen-lang-client-0684099973
+
