@@ -522,7 +522,11 @@ export const chatToolDefinitions: ToolDefinition[] = [
   {
     name: "query_analytics_view",
     description:
-      "Query one approved read-only analytics view with strict filters, column selection, ordering, and row limits. Views: chat_players (roster+flags), chat_gps_daily (GPS metrics incl. hml_distance, hmld_per_minute, fatigue_index, lower_speed_loading), chat_jump_latest (CMJ metrics + asymmetry %), chat_risk_signals (sprint recency, jump output, groin/hamstring force, asymmetry, flag_count).",
+      "Query one approved read-only analytics view with strict filters, column selection, ordering, and row limits. IMPORTANT: these views only contain RAW metric columns — there are NO pre-computed z-score, EWMA, or derived columns. Use only columns from the exact lists below (snake_case). If you try to select/order by an unlisted column the call fails.\n\n" +
+      "• chat_players — roster + flag summary. Columns: id, name, position, position_group, status, expected_return, latest_session_date, days_since_90, days_since_85, flag_count. OrderBy: name | position | status | latest_session_date | flag_count | days_since_90 | days_since_85.\n" +
+      "• chat_gps_daily — per-session GPS metrics. Columns: session_date, player_id, player_name, position, position_group, status, session_title, drill_titles, total_distance, high_speed_running, distance_zone_6, dynamic_stress_load (DSL — do NOT use 'dsl'), accelerations_zone_4_6, decelerations_zone_4_6, accel_decel, hml_efforts, collision_load, hml_distance, hmld_per_minute, fatigue_index, lower_speed_loading, max_speed, pct_max_speed. OrderBy: session_date | player_name | total_distance | high_speed_running | distance_zone_6 | dynamic_stress_load | hml_distance | fatigue_index | lower_speed_loading | collision_load | max_speed. Supports startDate/endDate filters.\n" +
+      "• chat_jump_latest — latest CMJ per player. Columns: player_id, player_name, position, position_group, status, test_date, jump_height_cm, rsi_modified, peak_power_per_bm, concentric_peak_force_per_bm, eccentric_braking_impulse, eccentric_deceleration_rfd, eccentric_duration_ms, countermovement_depth_cm, concentric_mean_force_asym, eccentric_braking_impulse_asym, eccentric_decel_rfd_asym, eccentric_peak_force_asym, braking_phase_duration_ms. OrderBy: test_date | player_name | jump_height_cm | rsi_modified | peak_power_per_bm. Supports startDate/endDate on test_date.\n" +
+      "• chat_risk_signals — one row per player, combined sprint/jump/asymmetry signals. Columns: player_id, player_name, position, position_group, status, latest_session_date, all_time_max_speed, days_since_90, days_since_85, jump_height_cm, rsi_modified, concentric_peak_force_per_bm, eccentric_braking_impulse, eccentric_deceleration_rfd, eccentric_duration_ms, countermovement_depth_cm, braking_phase_duration_ms, groin_squeeze_force, hamstring_iso_force, force_frame_asymmetry_pct, nordbord_asymmetry_pct, flag_count. OrderBy: player_name | latest_session_date | days_since_90 | days_since_85 | flag_count | jump_height_cm | rsi_modified | eccentric_braking_impulse | groin_squeeze_force | hamstring_iso_force | force_frame_asymmetry_pct | nordbord_asymmetry_pct.",
     parameters: createObjectSchema(
       {
         view: {
@@ -547,7 +551,8 @@ export const chatToolDefinitions: ToolDefinition[] = [
         select: {
           type: "array",
           items: { type: "string" },
-          description: "Optional list of approved columns to select.",
+          description:
+            "Optional list of approved snake_case columns for the chosen view (see the view lists in the tool description). Omit to use sensible defaults. Note: filter keys (playerName, playerId) are camelCase, but column names are always snake_case (player_name, player_id).",
         },
         orderBy: createObjectSchema(
           {

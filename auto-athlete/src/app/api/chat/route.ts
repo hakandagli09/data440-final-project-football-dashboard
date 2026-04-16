@@ -15,7 +15,7 @@ import { chatToolDefinitions, executeTool } from "@/lib/chat-tools";
 import { buildSystemPrompt } from "@/lib/system-prompt";
 
 const ALLOWED_ROLES: ChatRole[] = ["system", "user", "assistant", "tool"];
-const MAX_TOOL_ITERATIONS = 4;
+const MAX_TOOL_ITERATIONS = 6;
 /** Max non-system messages to keep in the conversation sent to the LLM.
  *  Keeps token count manageable for the Gemini API. */
 const MAX_HISTORY_MESSAGES = 8;
@@ -239,7 +239,7 @@ export async function POST(request: NextRequest) {
             for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
               const response = await chatCompletion(conversation, {
                 tools: toolDefinitions,
-                maxTokens: 512,
+                maxTokens: 1536,
               });
               const toolCalls = response.toolCalls ?? [];
 
@@ -273,12 +273,36 @@ export async function POST(request: NextRequest) {
                   iteration,
                   toolName: toolCall.name,
                 });
-                const toolResult = await executeTool(toolCall.name, toolCall.args);
-                logChatEvent("tool_execution_success", {
-                  iteration,
-                  toolName: toolCall.name,
-                  resultLength: toolResult.result.length,
-                });
+                // Catch tool execution failures (e.g. invalid column names in
+                // query_analytics_view) and feed them back to the model as a
+                // tool result so it can self-correct rather than aborting the
+                // entire chat request.
+                let toolResult: Awaited<ReturnType<typeof executeTool>>;
+                try {
+                  toolResult = await executeTool(toolCall.name, toolCall.args);
+                  logChatEvent("tool_execution_success", {
+                    iteration,
+                    toolName: toolCall.name,
+                    resultLength: toolResult.result.length,
+                  });
+                } catch (toolErr) {
+                  const errorMessage =
+                    toolErr instanceof Error ? toolErr.message : "Unknown tool error";
+                  logChatEvent("tool_execution_error", {
+                    iteration,
+                    toolName: toolCall.name,
+                    error: errorMessage,
+                  });
+                  toolResult = {
+                    toolCallId: toolCall.id ?? "",
+                    name: toolCall.name,
+                    result: JSON.stringify({
+                      error: errorMessage,
+                      hint:
+                        "The tool call failed validation. Review the tool description, adjust arguments (use only approved columns/filters), and try again.",
+                    }),
+                  };
+                }
                 conversation.push({
                   role: "tool",
                   content: toolResult.result,
@@ -290,10 +314,29 @@ export async function POST(request: NextRequest) {
                   },
                 });
               }
+            }
 
-              if (iteration === MAX_TOOL_ITERATIONS - 1) {
-                throw new Error("Chat tool loop exceeded the maximum iteration limit.");
-              }
+            // If we exited the loop without a final text reply (the model kept
+            // requesting tools past MAX_TOOL_ITERATIONS), force one last
+            // non-tool completion so the user always gets an answer from the
+            // data already gathered instead of a hard error.
+            if (didRunTools && !lastReply) {
+              logChatEvent("tool_loop_cap_reached_forcing_summary", {
+                iterations: MAX_TOOL_ITERATIONS,
+              });
+              conversation.push({
+                role: "user",
+                content:
+                  "You have reached the tool-call limit. Do not call any more tools. Summarize your best answer to my original question using only the tool results already gathered above. If the data is insufficient, say so briefly and suggest what to ask next.",
+              });
+              const forced = await chatCompletion(conversation, {
+                tools: [],
+                maxTokens: 1536,
+              });
+              lastReply = forced.reply;
+              logChatEvent("forced_summary_ready", {
+                replyLength: lastReply.length,
+              });
             }
 
             if (didRunTools) {
@@ -305,7 +348,7 @@ export async function POST(request: NextRequest) {
             } else {
               // No tools were needed — stream the response token-by-token.
               for await (const token of chatCompletionStream(conversation, {
-                maxTokens: 512,
+                maxTokens: 1536,
               })) {
                 controller.enqueue(
                   encoder.encode(`data: ${JSON.stringify({ token })}\n\n`)

@@ -2,6 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import PlayerStatusBadge from "@/components/PlayerStatusBadge";
 import type { PlayerStatus } from "@/lib/player-queries";
 
@@ -87,49 +90,127 @@ function parseStructuredBlocks(content: string): ParsedBlock[] {
   return blocks.length > 0 ? blocks : [{ type: "text", content: normalized }];
 }
 
-function renderInlineMarkdown(text: string): React.ReactNode[] {
-  const parts = text.split(/(\*\*.*?\*\*)/g);
+// Custom renderers that map markdown elements onto the Auto Athlete dark theme.
+// Covers headings, paragraphs, lists, tables, inline/block code, blockquotes,
+// horizontal rules, and links. Raw HTML is dropped by default (react-markdown
+// does not render it unless rehype-raw is added) which keeps LLM output safe.
+const markdownComponents: Components = {
+  h1: ({ children }) => (
+    <h1 className="font-display text-lg uppercase tracking-wider text-aa-text">
+      {children}
+    </h1>
+  ),
+  h2: ({ children }) => (
+    <h2 className="font-display text-base uppercase tracking-wider text-aa-text">
+      {children}
+    </h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="font-display text-sm uppercase tracking-wider text-aa-text-secondary">
+      {children}
+    </h3>
+  ),
+  h4: ({ children }) => (
+    <h4 className="text-sm font-semibold uppercase tracking-wide text-aa-text-secondary">
+      {children}
+    </h4>
+  ),
+  p: ({ children }) => (
+    <p className="leading-6 text-aa-text">{children}</p>
+  ),
+  strong: ({ children }) => (
+    <strong className="font-semibold text-aa-text">{children}</strong>
+  ),
+  em: ({ children }) => (
+    <em className="italic text-aa-text">{children}</em>
+  ),
+  ul: ({ children }) => (
+    <ul className="list-disc space-y-1 pl-5 marker:text-aa-accent/70">
+      {children}
+    </ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="list-decimal space-y-1 pl-5 marker:text-aa-text-secondary">
+      {children}
+    </ol>
+  ),
+  li: ({ children }) => <li className="leading-6">{children}</li>,
+  a: ({ href, children }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-aa-accent underline decoration-aa-accent/40 underline-offset-2 hover:decoration-aa-accent"
+    >
+      {children}
+    </a>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-2 border-aa-accent/50 pl-3 text-aa-text-secondary italic">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="my-2 border-aa-border" />,
+  // Render tables inside a horizontal-scroll wrapper so wide stat tables
+  // (common in this app) don't blow out the chat panel width.
+  table: ({ children }) => (
+    <div className="overflow-x-auto rounded-xl border border-aa-border bg-aa-bg/45">
+      <table className="w-full text-xs">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => (
+    <thead className="bg-aa-elevated text-[11px] uppercase tracking-wider text-aa-text-secondary">
+      {children}
+    </thead>
+  ),
+  tbody: ({ children }) => <tbody className="divide-y divide-aa-border">{children}</tbody>,
+  tr: ({ children }) => <tr className="align-top">{children}</tr>,
+  th: ({ children, style }) => (
+    <th
+      className="px-3 py-2 text-left font-semibold"
+      style={style}
+    >
+      {children}
+    </th>
+  ),
+  td: ({ children, style }) => (
+    <td className="px-3 py-2 font-mono text-aa-text" style={style}>
+      {children}
+    </td>
+  ),
+  // react-markdown v10 removed the `inline` prop. Fenced code blocks are
+  // wrapped in a <pre> and their children string preserves a trailing newline,
+  // while inline code never contains newlines — use that to differentiate.
+  code: ({
+    className,
+    children,
+    ...rest
+  }: React.HTMLAttributes<HTMLElement> & { className?: string; children?: React.ReactNode }) => {
+    const text = typeof children === "string" ? children : "";
+    const isBlock = text.includes("\n") || (className ?? "").startsWith("language-");
 
-  return parts.map((part, index) => {
-    if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
-      return <strong key={`${part}-${index}`} className="font-semibold text-aa-text">{part.slice(2, -2)}</strong>;
-    }
-
-    return part;
-  });
-}
-
-function renderLines(content: string): JSX.Element[] {
-  return content.split("\n").map((line, index) => {
-    const key = `${index}-${line}`;
-    const trimmed = line.trim();
-
-    if (/^[-*]\s+/.test(trimmed)) {
+    if (!isBlock) {
       return (
-        <div key={key} className="flex items-start gap-2">
-          <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-current/70" />
-          <span>{renderInlineMarkdown(trimmed.replace(/^[-*]\s+/, ""))}</span>
-        </div>
+        <code
+          className="rounded bg-aa-bg/70 px-1.5 py-0.5 font-mono text-[0.85em] text-aa-accent"
+          {...rest}
+        >
+          {children}
+        </code>
       );
     }
-
-    if (/^\d+\.\s+/.test(trimmed)) {
-      const [, number = "", text = ""] = trimmed.match(/^(\d+)\.\s+(.*)$/) ?? [];
-      return (
-        <div key={key} className="flex items-start gap-2">
-          <span className="min-w-[1.1rem] text-aa-text-secondary">{number}.</span>
-          <span>{renderInlineMarkdown(text)}</span>
-        </div>
-      );
-    }
-
     return (
-      <p key={key} className={trimmed.length === 0 ? "h-4" : ""}>
-        {trimmed.length === 0 ? "\u00a0" : renderInlineMarkdown(line)}
-      </p>
+      <code className={`${className ?? ""} font-mono text-xs text-aa-text`} {...rest}>
+        {children}
+      </code>
     );
-  });
-}
+  },
+  pre: ({ children }) => (
+    <pre className="overflow-x-auto rounded-xl border border-aa-border bg-aa-bg/70 p-3 text-xs leading-5">
+      {children}
+    </pre>
+  ),
+};
 
 export default function ChatMessage({
   role,
@@ -184,8 +265,16 @@ export default function ChatMessage({
             {blocks.map((block, index) => {
               if (block.type === "text") {
                 return (
-                  <div key={`text-${index}`} className="space-y-2 break-words">
-                    {renderLines(block.content)}
+                  <div
+                    key={`text-${index}`}
+                    className="space-y-2 break-words text-sm leading-6"
+                  >
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={markdownComponents}
+                    >
+                      {block.content}
+                    </ReactMarkdown>
                   </div>
                 );
               }
