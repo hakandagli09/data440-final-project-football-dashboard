@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   chatCompletion,
   chatCompletionStream,
-  GroqRateLimitError,
-} from "@/lib/qwen";
+  GeminiRateLimitError,
+} from "@/lib/gemini";
 import type {
   ChatMessage,
   ChatPageContext,
@@ -17,9 +17,9 @@ import { buildSystemPrompt } from "@/lib/system-prompt";
 const ALLOWED_ROLES: ChatRole[] = ["system", "user", "assistant", "tool"];
 const MAX_TOOL_ITERATIONS = 4;
 /** Max non-system messages to keep in the conversation sent to the LLM.
- *  Keeps token count low enough for Groq free-tier TPM limits. */
-const MAX_HISTORY_MESSAGES = 4;
-const MAX_MESSAGE_CHARS = 800;
+ *  Keeps token count manageable for the Gemini API. */
+const MAX_HISTORY_MESSAGES = 8;
+const MAX_MESSAGE_CHARS = 1200;
 
 function isChatMessage(value: unknown): value is ChatMessage {
   if (!value || typeof value !== "object") return false;
@@ -172,22 +172,6 @@ function pickToolsForRequest(messages: ChatMessage[], context?: ChatPageContext)
   return chatToolDefinitions.filter((tool) => selectedToolNames.has(tool.name));
 }
 
-function shouldPreferSmallModel(messages: ChatMessage[]): boolean {
-  const latestUserMessage = getLatestUserMessage(messages);
-  const simplePatterns = [
-    "how many",
-    "count",
-    "find ",
-    "who is",
-    "latest session",
-    "most recent",
-    "top ",
-    "leader",
-    "status",
-  ];
-
-  return latestUserMessage.length <= 140 && hasKeywords(latestUserMessage, simplePatterns);
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -225,14 +209,13 @@ export async function POST(request: NextRequest) {
 
     const systemPrompt = await buildSystemPrompt(context);
 
-    // Truncate history to the most recent messages to stay within Groq TPM limits.
+    // Truncate history to the most recent messages to keep token count manageable.
     // Always keep the system prompt; only trim user/assistant/tool messages.
     const recentMessages =
       messages.length > MAX_HISTORY_MESSAGES
         ? messages.slice(-MAX_HISTORY_MESSAGES)
         : messages;
     const toolDefinitions = pickToolsForRequest(recentMessages, context);
-    const preferSmallModel = shouldPreferSmallModel(recentMessages);
 
     const conversation: ChatMessage[] = compactConversation([
       {
@@ -249,16 +232,14 @@ export async function POST(request: NextRequest) {
           try {
             // Track whether any tool-call rounds ran. If they did, the final
             // non-streaming chatCompletion already contains the answer — we
-            // emit it directly instead of making a second streaming request
-            // that would exceed Groq's free-tier TPM window.
+            // emit it directly instead of making a redundant streaming request.
             let didRunTools = false;
             let lastReply = "";
 
             for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
               const response = await chatCompletion(conversation, {
                 tools: toolDefinitions,
-                preferSmallModel,
-                maxTokens: preferSmallModel ? 256 : 384,
+                maxTokens: 512,
               });
               const toolCalls = response.toolCalls ?? [];
 
@@ -316,16 +297,15 @@ export async function POST(request: NextRequest) {
             }
 
             if (didRunTools) {
-              // Tools already consumed most of the TPM budget — emit the
-              // final reply as a single chunk instead of a second API call.
+              // Tools already produced the final answer — emit it as a
+              // single chunk instead of making a redundant streaming request.
               controller.enqueue(
                 encoder.encode(`data: ${JSON.stringify({ token: lastReply })}\n\n`)
               );
             } else {
               // No tools were needed — stream the response token-by-token.
               for await (const token of chatCompletionStream(conversation, {
-                preferSmallModel,
-                maxTokens: preferSmallModel ? 256 : 384,
+                maxTokens: 512,
               })) {
                 controller.enqueue(
                   encoder.encode(`data: ${JSON.stringify({ token })}\n\n`)
@@ -337,7 +317,7 @@ export async function POST(request: NextRequest) {
           } catch (err) {
             const message = err instanceof Error ? err.message : "Unexpected error";
             console.error("[chat-route] stream_error", err);
-            if (err instanceof GroqRateLimitError) {
+            if (err instanceof GeminiRateLimitError) {
               controller.enqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({

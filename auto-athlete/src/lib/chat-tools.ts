@@ -30,11 +30,11 @@ import type { ToolDefinition, ToolResult } from "@/lib/chat-types";
 type GroupFilter = "skills_mids" | "bigs";
 type SortDirection = "asc" | "desc";
 
-/** Keep tool payloads small to stay within Groq free-tier TPM limits.
+/** Keep tool payloads small to avoid bloating the prompt token count.
  *  Profile payloads need a higher budget so required-metrics + fatigue
  *  data don't get silently truncated. */
-const MAX_TOOL_RESULT_CHARS = 4000;
-const MAX_TOOL_RESULT_CHARS_PROFILE = 6000;
+const MAX_TOOL_RESULT_CHARS = 6000;
+const MAX_TOOL_RESULT_CHARS_PROFILE = 10000;
 const MAX_RESULT_LIST_ITEMS = 12;
 const MAX_STRING_PREVIEW_CHARS = 220;
 const EXACT_TOOL_CACHE_TTL_MS = 60 * 1000;

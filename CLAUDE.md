@@ -27,7 +27,7 @@ Web app for Brian Kish (S&C coach, William & Mary Football) that automates his 5
 ├── supabase/
 │   └── schema.sql              # Full database schema (run in Supabase SQL Editor)
 └── auto-athlete/               # Next.js app
-    ├── .env.local              # Supabase URL + anon key + service role key + Groq API key
+    ├── .env.local              # Supabase URL + anon key + service role key + Google AI Studio key
     ├── package.json
     ├── tailwind.config.ts      # Custom aa-* color tokens, fonts, animations
     └── src/
@@ -91,7 +91,7 @@ What exists:
 - `csv-parser.ts` — type detection (GPS: "Session Date", Jump: "Test Type"+"BW [KG]", ForceFrame: "Direction"+"Mode", NordBord: "Date UTC"+"L Max Torque"), full mappings, date/time conversion, BOM/whitespace handling.
 - `date-utils.ts` — timezone-safe formatting/arithmetic for date-only strings (`YYYY-MM-DD`) to prevent off-by-one display issues.
 - Dark sports analytics aesthetic remains: Bebas Neue headers, electric cyan accent (#00f0ff), noise texture, staggered entrance animations.
-- `.env.local` uses Supabase URL + anon key + service role key + Groq API key/model ID.
+- `.env.local` uses Supabase URL + anon key + service role key + Google AI Studio API key/model ID.
 
 What needs to be built:
 
@@ -443,23 +443,23 @@ When a player is in `rehab` or `return_to_play` status, their Player Profile pag
 - Metrics to compare (same four groups as the % of baseline view): GPS load metrics, CNS output metrics, hip strength metrics, hamstring metrics.
 - Add a **trend line** view toggled from the same panel: shows the rehab player's metric trajectory over the past 4 weeks plotted against the position group's rolling average for the same period — so Brian can see if the gap is closing.
 
-### AI Chat Assistant (Groq)
+### AI Chat Assistant (Gemini)
 
-An LLM-powered chat panel where Brian can ask natural language questions about athlete data. The model (currently `qwen/qwen3-32b` via Groq Cloud, configurable through env vars) calls existing query functions as tools, fetches live Supabase data, and streams answers back.
+An LLM-powered chat panel where Brian can ask natural language questions about athlete data. The model (currently `gemini-3.1-pro-preview` via Google AI Studio, configurable through env vars) calls existing query functions as tools, fetches live Supabase data, and streams answers back.
 
-**Model:** Groq-hosted model via `GROQ_MODEL_ID` (currently `qwen/qwen3-32b`)
-**Host:** Groq Cloud (OpenAI-compatible `chat/completions` REST API)
+**Model:** Google AI Studio model via `GOOGLE_MODEL_ID` (currently `gemini-3.1-pro-preview`)
+**Host:** Google AI Studio (Gemini `generateContent` / `streamGenerateContent` REST API)
 **UI:** 420px slide-out panel on the right, accessible from TopBar
 
 **Current status:** Phase 1 through Phase 6 are implemented. The chat panel supports tool calling, streaming, retry/copy UX, suggested questions, session persistence, inline player/metric cards, and page-context awareness.
 
 #### Phase 1 — Backend Foundation
 
-Goal: A working `/api/chat` route that round-trips a message through Groq and returns a response. No tools, no streaming — just proving the LLM connection works.
+Goal: A working `/api/chat` route that round-trips a message through Gemini and returns a response. No tools, no streaming — just proving the LLM connection works.
 
-- [x] **1.1** Add `GROQ_API_KEY` and `GROQ_MODEL_ID` to `.env.local` (server-only, no `NEXT_PUBLIC_` prefix)
+- [x] **1.1** Add `GOOGLE_API_KEY` and `GOOGLE_MODEL_ID` to `.env.local` (server-only, no `NEXT_PUBLIC_` prefix)
 - [x] **1.2** Create `src/lib/chat-types.ts` — shared TypeScript types: `ChatRole`, `ChatMessage`, `ToolCall`, `ToolResult`, `ChatRequest`, `ChatResponse`, `ToolDefinition`
-- [x] **1.3** Create `src/lib/qwen.ts` — LLM client wrapper using raw `fetch` against Groq OpenAI-compatible `chat/completions` endpoint. Export `chatCompletion(messages, tools?)`. Handle 429/5xx with a single retry after 1s
+- [x] **1.3** Create `src/lib/gemini.ts` — LLM client wrapper using raw `fetch` against Google AI Studio `generateContent` endpoint. Export `chatCompletion(messages, tools?)`. Handle 429/5xx with retries
 - [x] **1.4** Create `src/app/api/chat/route.ts` — POST endpoint accepting `{ messages }`, calls `chatCompletion()`, returns `NextResponse.json({ reply })`
 - [x] **1.5** Test manually with curl: `curl -X POST http://localhost:3000/api/chat -H 'Content-Type: application/json' -d '{"messages":[{"role":"user","content":"Hello"}]}'`
 
@@ -476,7 +476,7 @@ Goal: Wrap existing query functions as callable tools so the LLM can fetch live 
   - `get_grouped_daily_metrics` → `getGroupedDailyMetrics(date, group)` from `src/lib/group-queries.ts`
   - `get_grouped_weekly_sums` → `getGroupedWeeklySums(weekStart, group)` from `src/lib/group-queries.ts`
 - [x] **2.2** Implement `executeTool(name, args)` dispatcher in `chat-tools.ts` — switch on tool name, call the corresponding query function, JSON.stringify the result (truncate at 15K chars if needed)
-- [x] **2.3** Update `qwen.ts` to pass tool definitions in the Groq `tools` field
+- [x] **2.3** Update `gemini.ts` to pass tool definitions in the Gemini `tools` field
 - [x] **2.4** Update `api/chat/route.ts` with the tool-call loop: send → if tool_calls, execute each → append results → re-send (max 5 iterations) → return final text reply
 - [x] **2.5** Test: ask "What was the team average total distance on the most recent session?" via curl — should call `get_dashboard_data` and return a natural-language answer
 - [x] **2.6** Test multi-tool: ask "Show me the profile for the player with the most flags" — should call `get_players_list` then `get_player_profile`
@@ -514,7 +514,7 @@ Goal: Make the LLM's answers genuinely useful for an S&C coach by giving it deep
 
 Goal: Stream responses token-by-token for responsive feel. Add error handling, markdown rendering, and visual refinements.
 
-- [x] **5.1** Add `chatCompletionStream()` to `qwen.ts` using Groq streaming `chat/completions` endpoint. Tool calls run non-streamed; only the final text response streams
+- [x] **5.1** Add `chatCompletionStream()` to `gemini.ts` using Gemini `streamGenerateContent` endpoint. Tool calls run non-streamed; only the final text response streams
 - [x] **5.2** Update `api/chat/route.ts` to return SSE stream (`text/event-stream`) with `data: {"token":"..."}\n\n` events and `data: [DONE]\n\n` terminator
 - [x] **5.3** Update `ChatPanel.tsx` to consume stream via `response.body.getReader()`, updating assistant message content incrementally. Show "Thinking..." during tool-call execution
 - [x] **5.4** Improve `ChatMessage.tsx` — basic markdown rendering (`**bold**`, line breaks, bullet/numbered lists), copy button on assistant messages, blinking cursor while streaming

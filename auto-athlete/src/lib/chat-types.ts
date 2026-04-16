@@ -13,6 +13,8 @@ export interface ToolCall {
   id?: string;
   name: string;
   args: Record<string, unknown>;
+  /** Gemini 3+ thought_signature — must be echoed back on functionCall parts. */
+  thoughtSignature?: string;
 }
 
 export interface ToolResult {
