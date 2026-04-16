@@ -9,6 +9,7 @@ import {
 } from "@/lib/derived-metrics";
 import { getPositionGroup, type PositionGroup } from "@/lib/position-groups";
 import { supabaseServer as supabase } from "@/lib/supabase-server";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 type GroupFilter = Extract<PositionGroup, "skills_mids" | "bigs">;
 
@@ -146,12 +147,15 @@ function filterToGroup<T extends { playerId: string }>(
 }
 
 export async function getPositionReportData(selectedDate?: string): Promise<PositionReportData> {
-  const { data: dateRows } = await supabase
-    .from("gps_sessions")
-    .select("session_date")
-    .order("session_date", { ascending: false });
+  // Paginate so we don't silently drop older dates from the dropdown.
+  const dateRows = await fetchAllRows<{ session_date: string }>(() =>
+    supabase
+      .from("gps_sessions")
+      .select("session_date")
+      .order("session_date", { ascending: false })
+  );
 
-  const availableDates = Array.from(new Set((dateRows ?? []).map((row) => row.session_date as string)));
+  const availableDates = Array.from(new Set(dateRows.map((row) => row.session_date)));
   const currentDate = selectedDate && availableDates.includes(selectedDate)
     ? selectedDate
     : (availableDates[0] ?? "");
@@ -174,11 +178,26 @@ export async function getPositionReportData(selectedDate?: string): Promise<Posi
   const weekStart = getWeekStart(currentDate);
   const weekEnd = currentDate;
 
+  // `historicalGpsRows` spans the entire season (no lower bound) and
+  // easily exceeds PostgREST's 1000-row cap once we have more than a
+  // few weeks of drill-level data — so it MUST be paginated. The
+  // weekly fetch is similarly at risk (4 full-pads days ≈ 1600 rows).
+  type HistoryRow = {
+    player_id: string;
+    session_date: string;
+    high_speed_running: number | null;
+    distance_zone_6: number | null;
+    accelerations_zone_4_6: number | null;
+    decelerations_zone_4_6: number | null;
+    hml_efforts: number | null;
+    max_speed: number | null;
+  };
+
   const [
     { data: playersRows },
     { data: dailyGpsRows },
-    { data: historicalGpsRows },
-    { data: weeklyRows },
+    historicalGpsRows,
+    weeklyRows,
     { data: jumpRows },
   ] = await Promise.all([
     supabase.from("players").select("id, name, position"),
@@ -186,15 +205,19 @@ export async function getPositionReportData(selectedDate?: string): Promise<Posi
       .from("gps_sessions")
       .select("player_id, session_date, total_distance, high_speed_running, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, dynamic_stress_load, hml_distance, hmld_per_minute, max_speed, pct_max_speed, hml_efforts, lower_speed_loading, collision_load")
       .eq("session_date", currentDate),
-    supabase
-      .from("gps_sessions")
-      .select("player_id, session_date, high_speed_running, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, max_speed")
-      .lte("session_date", currentDate),
-    supabase
-      .from("gps_sessions")
-      .select("player_id, session_date, total_distance, high_speed_running, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, dynamic_stress_load, hml_efforts, lower_speed_loading, collision_load")
-      .gte("session_date", weekStart)
-      .lte("session_date", weekEnd),
+    fetchAllRows<HistoryRow>(() =>
+      supabase
+        .from("gps_sessions")
+        .select("player_id, session_date, high_speed_running, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, max_speed")
+        .lte("session_date", currentDate)
+    ),
+    fetchAllRows<GpsSessionRow>(() =>
+      supabase
+        .from("gps_sessions")
+        .select("player_id, session_date, total_distance, high_speed_running, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, dynamic_stress_load, hml_efforts, lower_speed_loading, collision_load")
+        .gte("session_date", weekStart)
+        .lte("session_date", weekEnd)
+    ),
     supabase
       .from("jump_tests")
       .select("player_id, body_weight_kg, test_date")
@@ -203,7 +226,9 @@ export async function getPositionReportData(selectedDate?: string): Promise<Posi
 
   const players = groupPlayers((playersRows ?? []) as Array<{ id: string; name: string; position: string | null }>);
   const weights = latestBodyWeightByPlayer((jumpRows ?? []) as Array<{ player_id: string; body_weight_kg: number | null }>);
-  const history = (historicalGpsRows ?? []) as GpsSessionRow[];
+  // `HistoryRow` is a strict subset of `GpsSessionRow` for the fields
+  // we read below, so the runtime shape is compatible.
+  const history = (historicalGpsRows as unknown) as GpsSessionRow[];
   const dailyRows = (dailyGpsRows ?? []) as GpsSessionRow[];
 
   const playerTopSpeed = new Map<string, number>();
@@ -290,7 +315,7 @@ export async function getPositionReportData(selectedDate?: string): Promise<Posi
     return row;
   });
 
-  const weekRows = (weeklyRows ?? []) as GpsSessionRow[];
+  const weekRows = weeklyRows as GpsSessionRow[];
   const weeklyByPlayer = new Map<string, WeeklyPlayerAggregate>();
   for (const row of weekRows) {
     const player = players.get(row.player_id);

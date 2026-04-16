@@ -8,6 +8,7 @@
 import { supabaseServer as supabase } from "./supabase-server";
 import { subtractDays } from "./date-utils";
 import { getPositionGroup } from "./position-groups";
+import { fetchAllRows } from "./supabase-paginate";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -239,20 +240,24 @@ async function resolveDateRange(
 }
 
 async function getMetricRowsForWindow(startDate: string, endDate: string): Promise<MetricRow[]> {
-  const { data, error } = await supabase
-    .from("gps_sessions")
-    .select(
-      "player_id, session_date, session_title, total_distance, max_speed, high_speed_running, dynamic_stress_load, distance_zone_6, collision_load, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, players(name, position)"
-    )
-    .gte("session_date", startDate)
-    .lte("session_date", endDate);
-
-  if (error) {
-    console.error("[getMetricRowsForWindow] Supabase error:", error.message, error);
+  // Drill-level GPS data can hit thousands of rows for even a short
+  // window (e.g. full-pad practices produce ~400 rows/day), so page
+  // past PostgREST's 1000-row cap here too.
+  try {
+    const rows = await fetchAllRows<MetricRow>(() =>
+      supabase
+        .from("gps_sessions")
+        .select(
+          "player_id, session_date, session_title, total_distance, max_speed, high_speed_running, dynamic_stress_load, distance_zone_6, collision_load, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, players(name, position)"
+        )
+        .gte("session_date", startDate)
+        .lte("session_date", endDate)
+    );
+    return rows;
+  } catch (err) {
+    console.error("[getMetricRowsForWindow] Supabase error:", err);
     return [];
   }
-
-  return (data ?? []) as MetricRow[];
 }
 
 function pctChange(current: number, previous: number): { change: string; changeType: "positive" | "negative" | "neutral" } {
@@ -270,21 +275,28 @@ function pctChange(current: number, previous: number): { change: string; changeT
 
 // ─── Queries ──────────────────────────────────────────────────────────────
 
-/** Get all distinct session dates, most recent first. */
+/**
+ * Get all distinct session dates, most recent first.
+ *
+ * NOTE: We cannot rely on a single `.select().order()` call here —
+ * PostgREST silently caps SELECT responses at 1000 rows, which on the
+ * full `gps_sessions` table would drop every date older than the most
+ * recent ~6 weeks. `fetchAllRows` pages past that cap.
+ */
 export async function getAvailableSessionDates(): Promise<string[]> {
-  const { data, error } = await supabase
-    .from("gps_sessions")
-    .select("session_date")
-    .order("session_date", { ascending: false });
-
-  if (error) {
-    console.error("[getAvailableSessionDates] Supabase error:", error.message, error);
+  try {
+    const rows = await fetchAllRows<{ session_date: string }>(() =>
+      supabase
+        .from("gps_sessions")
+        .select("session_date")
+        .order("session_date", { ascending: false })
+    );
+    const unique = Array.from(new Set(rows.map((r) => r.session_date)));
+    return unique;
+  } catch (err) {
+    console.error("[getAvailableSessionDates] Supabase error:", err);
     return [];
   }
-
-  if (!data) return [];
-  const unique = Array.from(new Set(data.map((r) => r.session_date as string)));
-  return unique;
 }
 
 /** Get raw GPS rows for a specific session date. */
@@ -377,11 +389,20 @@ async function computeAcwr(date: string): Promise<AcwrResult> {
   const windowStart = subtractDays(date, 28);
   const acuteStart = subtractDays(date, 7);
 
-  const { data } = await supabase
-    .from("gps_sessions")
-    .select("session_date, player_id, dynamic_stress_load")
-    .gte("session_date", windowStart)
-    .lte("session_date", date);
+  // 28 days of drill-level data can easily exceed PostgREST's 1000-row
+  // cap (~400 rows per practice × 12 practices ≈ 4.8k rows), so page
+  // through it instead of using a single `.select()` call.
+  const data = await fetchAllRows<{
+    session_date: string;
+    player_id: string;
+    dynamic_stress_load: number | null;
+  }>(() =>
+    supabase
+      .from("gps_sessions")
+      .select("session_date, player_id, dynamic_stress_load")
+      .gte("session_date", windowStart)
+      .lte("session_date", date)
+  );
 
   if (!data || data.length === 0) {
     return { ratio: null, label: "No data", riskyPlayers: 0 };

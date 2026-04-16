@@ -1,5 +1,6 @@
 import { supabaseServer as supabase } from "@/lib/supabase-server";
 import { getPositionGroup, getPositionGroupLabel } from "@/lib/position-groups";
+import { fetchAllRows } from "@/lib/supabase-paginate";
 
 export type PlayerStatus = "injured" | "rehab" | "return_to_play" | "cleared";
 
@@ -221,16 +222,34 @@ function readinessFromFlags(flags: string[]): "green" | "yellow" | "red" | "neut
 }
 
 export async function getPlayersList(): Promise<PlayerListItem[]> {
-  const [{ data: players }, { data: injuries }, { data: gpsRows }] = await Promise.all([
+  type RosterGpsRow = {
+    player_id: string;
+    session_date: string;
+    max_speed: number | null;
+    high_speed_running: number | null;
+    distance_zone_6: number | null;
+    accelerations_zone_4_6: number | null;
+    decelerations_zone_4_6: number | null;
+    hml_efforts: number | null;
+  };
+
+  // Full-history GPS fetch (no date filter) across all players will
+  // hit PostgREST's 1000-row cap immediately on a populated table, so
+  // page through it — otherwise the roster's flag/readiness counts are
+  // computed from a truncated slice of the data.
+  const [{ data: players }, { data: injuries }, gpsRowsAll] = await Promise.all([
     supabase.from("players").select("id, name, position").order("name", { ascending: true }),
     supabase
       .from("injuries")
       .select("player_id, status, expected_return, updated_at")
       .order("updated_at", { ascending: false }),
-    supabase
-      .from("gps_sessions")
-      .select("player_id, session_date, max_speed, high_speed_running, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts"),
+    fetchAllRows<RosterGpsRow>(() =>
+      supabase
+        .from("gps_sessions")
+        .select("player_id, session_date, max_speed, high_speed_running, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts")
+    ),
   ]);
+  const gpsRows = gpsRowsAll;
 
   const injuryMap = new Map<string, Array<{ status: PlayerStatus; expected_return: string | null }>>();
   for (const row of injuries ?? []) {
@@ -242,8 +261,11 @@ export async function getPlayersList(): Promise<PlayerListItem[]> {
     injuryMap.set(row.player_id, list);
   }
 
+  // `RosterGpsRow` is a strict subset of `GpsRow`; the extra fields on
+  // the wider type are simply absent at runtime and the downstream
+  // code below only reads columns we explicitly SELECTed.
   const gpsMap = new Map<string, GpsRow[]>();
-  for (const row of (gpsRows ?? []) as GpsRow[]) {
+  for (const row of (gpsRows as unknown) as GpsRow[]) {
     const list = gpsMap.get(row.player_id) ?? [];
     list.push(row);
     gpsMap.set(row.player_id, list);
@@ -343,7 +365,10 @@ export async function getPlayersByStatus(
 }
 
 export async function getPlayerProfile(playerId: string): Promise<PlayerProfileData | null> {
-  const [{ data: player }, { data: injuries }, { data: gpsRows }, { data: jumpRows }, { data: forceRows }, { data: nordRows }] = await Promise.all([
+  // At drill-level granularity a single player can accumulate >1000
+  // rows over a full season (~13 drills/practice × ~50 practices), so
+  // paginate their GPS history here too.
+  const [{ data: player }, { data: injuries }, gpsRowsAll, { data: jumpRows }, { data: forceRows }, { data: nordRows }] = await Promise.all([
     supabase.from("players").select("id, name, position").eq("id", playerId).maybeSingle(),
     supabase
       .from("injuries")
@@ -351,11 +376,13 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
       .eq("player_id", playerId)
       .order("updated_at", { ascending: false })
       .limit(1),
-    supabase
-      .from("gps_sessions")
-      .select("player_id, session_date, max_speed, pct_max_speed, high_speed_running, distance_zone_6, dynamic_stress_load, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, total_distance, hml_distance, hmld_per_minute, lower_speed_loading, collision_load")
-      .eq("player_id", playerId)
-      .order("session_date", { ascending: true }),
+    fetchAllRows<GpsRow>(() =>
+      supabase
+        .from("gps_sessions")
+        .select("player_id, session_date, max_speed, pct_max_speed, high_speed_running, distance_zone_6, dynamic_stress_load, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, total_distance, hml_distance, hmld_per_minute, lower_speed_loading, collision_load")
+        .eq("player_id", playerId)
+        .order("session_date", { ascending: true })
+    ),
     supabase
       .from("jump_tests")
       .select("test_date, jump_height_cm, rsi_modified, body_weight_kg")
@@ -379,7 +406,7 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
 
   const status = (injuries?.[0]?.status as PlayerStatus | undefined) ?? "cleared";
   const expectedReturn = injuries?.[0]?.expected_return ?? null;
-  const rows = (gpsRows ?? []) as GpsRow[];
+  const rows = gpsRowsAll;
   const recency = sprintRecencyFlags(rows);
   const flags = computeFlags(rows, status);
 

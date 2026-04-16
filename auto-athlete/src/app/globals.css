@@ -90,6 +90,40 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Print styles ──────────────────────────────────────── */
+/* When the user prints (or saves as PDF) the Session Report, we want a
+   clean, high-contrast, paper-friendly layout — no sidebar, no topbar,
+   no dark theme background, and force cards to break cleanly. */
+@media print {
+  @page {
+    size: letter landscape;
+    margin: 0.5in;
+  }
+  html, body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  /* Hide chrome that isn't useful on paper. */
+  aside,
+  header,
+  nav,
+  .print\:hidden {
+    display: none !important;
+  }
+  /* Expand main content to use the full page width. */
+  main {
+    margin-left: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+  }
+  /* Force colors for thresholded cells so the red/yellow/green scale
+     survives the print pipeline (browsers strip backgrounds by default). */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+
 /* ── Drop zone pulse ───────────────────────────────────── */
 @keyframes drop-pulse {
   0%, 100% { border-color: #00f0ff40; box-shadow: 0 0 0 0 #00f0ff20; }

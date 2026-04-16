@@ -1,13 +1,10 @@
-import { supabaseServer } from "@/lib/supabase-server";
+import { getAvailableSessionDates } from "@/lib/queries";
 
 export default async function SessionsPage() {
-  const { data } = await supabaseServer
-    .from("gps_sessions")
-    .select("session_date");
-
-  const sessionCount = data
-    ? new Set(data.map((r) => r.session_date)).size
-    : 0;
+  // Use the paginated helper so we don't under-count sessions once
+  // the `gps_sessions` table grows past PostgREST's 1000-row cap.
+  const dates = await getAvailableSessionDates();
+  const sessionCount = dates.length;
 
   return (
     <div className="space-y-6">
