@@ -4,6 +4,7 @@ import PlayerStatusBadge from "@/components/PlayerStatusBadge";
 import PlayerStatusSelect from "@/components/PlayerStatusSelect";
 import { formatSessionDate } from "@/lib/date-utils";
 import { getPlayerProfile } from "@/lib/player-queries";
+import { formatLbs } from "@/lib/units";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -93,7 +94,7 @@ export default async function PlayerProfilePage({ params }: PageProps) {
         <div className="bg-aa-surface border border-aa-border rounded-xl p-4">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-aa-text-dim">All-Time Max Speed</span>
           <p className="font-display text-3xl text-aa-warm mt-1">
-            {num(profile.sprintRecency.allTimeMaxSpeed)}<span className="font-body text-sm text-aa-text-secondary ml-1">m/s</span>
+            {num(profile.sprintRecency.allTimeMaxSpeed)}<span className="font-body text-sm text-aa-text-secondary ml-1">mph</span>
           </p>
         </div>
         <div className="bg-aa-surface border border-aa-border rounded-xl p-4">
@@ -170,12 +171,16 @@ export default async function PlayerProfilePage({ params }: PageProps) {
             <h2 className="font-display text-xl tracking-[0.06em] text-aa-text mb-3">FATIGUE SNAPSHOT</h2>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div className="rounded-lg bg-aa-bg/50 p-3 border border-aa-border/40">
-                <p className="text-aa-text-dim text-xs">Jump Height (cm)</p>
-                <p className="font-mono text-aa-text mt-1">{num(profile.fatigue.jumpHeightCm, 1)}</p>
+                <p className="text-aa-text-dim text-xs">Jump Height (in)</p>
+                <p className="font-mono text-aa-text mt-1">{num(profile.fatigue.jumpHeightIn, 1)}</p>
               </div>
               <div className="rounded-lg bg-aa-bg/50 p-3 border border-aa-border/40">
                 <p className="text-aa-text-dim text-xs">RSI-Modified</p>
                 <p className="font-mono text-aa-text mt-1">{num(profile.fatigue.rsiModified, 2)}</p>
+              </div>
+              <div className="rounded-lg bg-aa-bg/50 p-3 border border-aa-border/40">
+                <p className="text-aa-text-dim text-xs">Body Weight (lb)</p>
+                <p className="font-mono text-aa-text mt-1">{formatLbs(profile.bodyWeightLb, 1)}</p>
               </div>
               <div className="rounded-lg bg-aa-bg/50 p-3 border border-aa-border/40">
                 <p className="text-aa-text-dim text-xs">Accel + Decel (Z4-6)</p>
@@ -185,7 +190,7 @@ export default async function PlayerProfilePage({ params }: PageProps) {
                 <p className="text-aa-text-dim text-xs">Groin Squeeze</p>
                 <p className="font-mono text-aa-text mt-1">{num(profile.fatigue.groinSqueeze, 1)}</p>
               </div>
-              <div className="rounded-lg bg-aa-bg/50 p-3 border border-aa-border/40 col-span-2">
+              <div className="rounded-lg bg-aa-bg/50 p-3 border border-aa-border/40">
                 <p className="text-aa-text-dim text-xs">Hamstring Iso 30</p>
                 <p className="font-mono text-aa-text mt-1">{num(profile.fatigue.hamstringIso, 1)}</p>
               </div>

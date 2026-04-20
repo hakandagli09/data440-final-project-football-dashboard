@@ -82,7 +82,7 @@ export interface SessionReportCell {
   suppressPercent: boolean;
 }
 
-/** 7-day sparkline series of daily total distance (in meters, converted client-side). */
+/** 7-day sparkline series of daily total distance (already in yards; no conversion). */
 export interface SparklinePoint {
   date: string;
   value: number;

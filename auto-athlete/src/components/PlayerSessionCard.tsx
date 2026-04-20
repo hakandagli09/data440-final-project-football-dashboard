@@ -10,25 +10,21 @@ import type {
 } from "@/lib/session-report-queries";
 import {
   formatCount,
-  formatMetersAsYards,
-  formatMpsAsMph,
+  formatMph,
   formatYards,
-  metersPerMinToYardsPerMin,
-  metersToYards,
-  msToMph,
   UNIT_LABELS,
 } from "@/lib/units";
 
 /**
  * Format a single metric value (daily / running total / weekly avg) using
- * the unit declared on the cell. Handles the meters→yards and m/s→mph
- * conversions so the raw DB values never surface to the coach.
+ * the unit declared on the cell. Values in the DB are already imperial
+ * (yards, mph, yd/min) for W&M's StatSports config — no conversion.
  */
 function formatMetricValue(value: number | null, unit: ReportUnit, decimals: number): string {
   if (value == null) return "—";
-  if (unit === "distance") return formatMetersAsYards(value, decimals);
-  if (unit === "speed") return formatMpsAsMph(value, decimals);
-  if (unit === "distance_per_min") return formatYards(metersPerMinToYardsPerMin(value), decimals);
+  if (unit === "distance") return formatYards(value, decimals);
+  if (unit === "speed") return formatMph(value, decimals);
+  if (unit === "distance_per_min") return formatYards(value, decimals);
   if (unit === "pct") return `${value.toFixed(decimals)}%`;
   return formatCount(value, decimals);
 }
@@ -97,13 +93,13 @@ export default function PlayerSessionCard({ card }: PlayerSessionCardProps) {
   const showStatus = card.status !== "cleared";
 
   // Latest-day yardage drives the sparkline summary label.
-  const latestDistanceMeters = card.distanceSparkline.at(-1)?.value ?? 0;
-  const latestDistanceYards = metersToYards(latestDistanceMeters) ?? 0;
+  // Sparkline values are already in yards (DB stores imperial directly).
+  const latestDistanceYards = card.distanceSparkline.at(-1)?.value ?? 0;
 
   // Today's max speed is the most useful speed number to surface in the
-  // header — it's what the coach asks about first.
+  // header — it's what the coach asks about first. DB value is already mph.
   const maxSpeedCell = card.cells.find((c: SessionReportCell) => c.key === "max_speed");
-  const maxSpeedMph = msToMph(maxSpeedCell?.daily ?? null);
+  const maxSpeedMph: number | null = maxSpeedCell?.daily ?? null;
 
   return (
     <div className="rounded-xl border border-aa-border bg-aa-surface overflow-hidden print:break-inside-avoid print:border-gray-400">

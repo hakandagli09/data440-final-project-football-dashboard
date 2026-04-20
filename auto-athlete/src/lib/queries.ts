@@ -157,17 +157,18 @@ function formatNum(n: number, decimals = 0): string {
 }
 
 function getMetricMeta(metric: ChatMetric): { label: string; unit: string } {
+  // DB already stores imperial (yd, mph) for this team — unit labels match.
   switch (metric) {
     case "total_distance":
-      return { label: "Total Distance", unit: "m" };
+      return { label: "Total Distance", unit: "yd" };
     case "max_speed":
-      return { label: "Max Speed", unit: "m/s" };
+      return { label: "Max Speed", unit: "mph" };
     case "high_speed_running":
-      return { label: "HSR", unit: "m" };
+      return { label: "HSR", unit: "yd" };
     case "dynamic_stress_load":
       return { label: "Dynamic Stress Load", unit: "AU" };
     case "distance_zone_6":
-      return { label: "Zone 6 Sprint Distance", unit: "m" };
+      return { label: "Zone 6 Sprint Distance", unit: "yd" };
     case "collision_load":
       return { label: "Collision Load", unit: "AU" };
     case "accelerations_zone_4_6":
@@ -503,11 +504,11 @@ export async function getDashboardData(date?: string): Promise<DashboardData> {
     accent: string;
     icon: KpiData["icon"];
   }[] = [
-    { title: "Total Distance", key: "totalDistance", unit: "m", decimals: 0, accent: "aa-accent", icon: "distance" },
-    { title: "Top Speed", key: "topSpeed", unit: "m/s", decimals: 1, accent: "aa-warm", icon: "speed" },
-    { title: "HSR Distance", key: "hsr", unit: "m", decimals: 0, accent: "aa-accent", icon: "hsr" },
+    { title: "Total Distance", key: "totalDistance", unit: "yd", decimals: 0, accent: "aa-accent", icon: "distance" },
+    { title: "Top Speed", key: "topSpeed", unit: "mph", decimals: 1, accent: "aa-warm", icon: "speed" },
+    { title: "HSR Distance", key: "hsr", unit: "yd", decimals: 0, accent: "aa-accent", icon: "hsr" },
     { title: "Player Load", key: "dsl", unit: "AU", decimals: 0, accent: "aa-accent", icon: "load" },
-    { title: "Sprint Distance", key: "sprintDist", unit: "m", decimals: 0, accent: "aa-warm", icon: "sprint" },
+    { title: "Sprint Distance", key: "sprintDist", unit: "yd", decimals: 0, accent: "aa-warm", icon: "sprint" },
     { title: "Metabolic Power", key: "metabolicPower", unit: "W", decimals: 0, accent: "aa-accent", icon: "metabolic" },
   ];
 
@@ -543,13 +544,15 @@ export async function getDashboardData(date?: string): Promise<DashboardData> {
   );
   const zoneTotal = sum(zoneSums);
 
+  // Labels shown in mph — StatSports default zone thresholds converted from
+  // m/s for display (7.0 m/s ≈ 15.7 mph, 5.5 m/s ≈ 12.3 mph, …).
   const zoneConfig = [
-    { zone: "Zone 6", label: "> 7.0 m/s", color: "bg-aa-danger" },
-    { zone: "Zone 5", label: "5.5–7.0", color: "bg-aa-warm" },
-    { zone: "Zone 4", label: "4.0–5.5", color: "bg-aa-warning" },
-    { zone: "Zone 3", label: "2.5–4.0", color: "bg-aa-accent" },
-    { zone: "Zone 2", label: "1.5–2.5", color: "bg-aa-text-secondary" },
-    { zone: "Zone 1", label: "< 1.5", color: "bg-aa-text-dim" },
+    { zone: "Zone 6", label: "> 15.7 mph", color: "bg-aa-danger" },
+    { zone: "Zone 5", label: "12.3–15.7", color: "bg-aa-warm" },
+    { zone: "Zone 4", label: "9.0–12.3", color: "bg-aa-warning" },
+    { zone: "Zone 3", label: "5.6–9.0", color: "bg-aa-accent" },
+    { zone: "Zone 2", label: "3.4–5.6", color: "bg-aa-text-secondary" },
+    { zone: "Zone 1", label: "< 3.4", color: "bg-aa-text-dim" },
   ];
 
   const speedZones: SpeedZoneData[] = zoneConfig.map((cfg, i) => ({

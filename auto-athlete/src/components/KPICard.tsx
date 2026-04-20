@@ -17,7 +17,7 @@
  *
  * @property title       — Short metric label (e.g. "Total Distance", "Top Speed")
  * @property value       — The formatted numeric string to display (e.g. "5,847")
- * @property unit        — Unit abbreviation (e.g. "m", "m/s", "bpm", "AU")
+ * @property unit        — Unit abbreviation (e.g. "yd", "mph", "bpm", "AU")
  * @property change      — Session-over-session delta as a string (e.g. "12%", "2")
  * @property changeType  — Direction of the change: "positive" (green ↑),
  *                          "negative" (red ↓), or "neutral" (gray →)

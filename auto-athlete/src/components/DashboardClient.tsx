@@ -243,12 +243,12 @@ export default function DashboardClient({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <span className="text-[10px] font-semibold tracking-wider uppercase text-aa-text-dim">Avg Speed</span>
-                <p className="font-display text-2xl text-aa-text mt-0.5">{avgSpeed} <span className="text-sm font-body text-aa-text-dim">m/s</span></p>
+                <p className="font-display text-2xl text-aa-text mt-0.5">{avgSpeed} <span className="text-sm font-body text-aa-text-dim">mph</span></p>
               </div>
               <div>
                 <span className="text-[10px] font-semibold tracking-wider uppercase text-aa-text-dim">Peak Speed</span>
                 <p className="font-display text-2xl text-aa-warm mt-0.5">
-                  {kpis.find((k) => k.icon === "speed")?.value ?? "—"} <span className="text-sm font-body text-aa-text-dim">m/s</span>
+                  {kpis.find((k) => k.icon === "speed")?.value ?? "—"} <span className="text-sm font-body text-aa-text-dim">mph</span>
                 </p>
               </div>
             </div>
@@ -277,7 +277,7 @@ export default function DashboardClient({
                 <tr className="border-b border-aa-border/50 bg-aa-bg/50">
                   <th className="text-left text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">#</th>
                   <th className="text-left text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">Player</th>
-                  <th className="text-right text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">Dist (m)</th>
+                  <th className="text-right text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">Dist (yd)</th>
                   <th className="text-right text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">Top Spd</th>
                   <th className="text-right text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">Load</th>
                 </tr>

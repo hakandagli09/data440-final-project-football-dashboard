@@ -1,6 +1,7 @@
 import { supabaseServer as supabase } from "@/lib/supabase-server";
 import { getPositionGroup, getPositionGroupLabel } from "@/lib/position-groups";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { kgToLbs } from "@/lib/units";
 
 export type PlayerStatus = "injured" | "rehab" | "return_to_play" | "cleared";
 
@@ -35,12 +36,17 @@ export interface PlayerProfileData {
     dsl: number;
   }>;
   fatigue: {
+    // Jump height expressed in inches (jump_height_in from CSV). `jumpHeightCm`
+    // kept temporarily in case other consumers still read it, but UI uses in.
     jumpHeightCm: number | null;
+    jumpHeightIn: number | null;
     rsiModified: number | null;
     accelDecel46: number | null;
     groinSqueeze: number | null;
     hamstringIso: number | null;
   };
+  // Body weight converted from stored kg to pounds for display.
+  bodyWeightLb: number | null;
   asymmetry: {
     forceFramePct: number | null;
     nordBordPct: number | null;
@@ -385,7 +391,7 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
     ),
     supabase
       .from("jump_tests")
-      .select("test_date, jump_height_cm, rsi_modified, body_weight_kg")
+      .select("test_date, jump_height_cm, jump_height_in, rsi_modified, body_weight_kg")
       .eq("player_id", playerId)
       .order("test_date", { ascending: false })
       .limit(1),
@@ -481,30 +487,31 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
   const ewmaExplosive = dailyAgg.length > 0 ? ewmaSeries(dailyAgg.map((d) => d.explosive)).at(-1) ?? null : null;
 
   // Required metrics are rendered as profile cards and differ by position group.
+  // Distance values are stored in yards, speed in mph (StatSports Apex config).
   const requiredMetrics = group === "bigs"
     ? [
-      { label: "Total Distance", value: latestGps?.total_distance ?? null, unit: "m" },
+      { label: "Total Distance", value: latestGps?.total_distance ?? null, unit: "yd" },
       { label: "DSL", value: latestGps?.dynamic_stress_load ?? null, unit: "AU" },
       { label: "Lower Speed Loading", value: latestGps?.lower_speed_loading ?? null, unit: "AU" },
-      { label: "HML Distance", value: latestGps?.hml_distance ?? null, unit: "m" },
-      { label: "HMLD Per Minute", value: latestGps?.hmld_per_minute ?? null },
-      { label: "HSR", value: latestGps?.high_speed_running ?? null, unit: "m" },
+      { label: "HML Distance", value: latestGps?.hml_distance ?? null, unit: "yd" },
+      { label: "HMLD Per Minute", value: latestGps?.hmld_per_minute ?? null, unit: "yd/min" },
+      { label: "HSR", value: latestGps?.high_speed_running ?? null, unit: "yd" },
       { label: "Zone 4-6 Accelerations", value: latestGps?.accelerations_zone_4_6 ?? null },
       { label: "Explosive Efforts", value: latestGps?.hml_efforts ?? null },
-      { label: "Max Velocity", value: latestGps?.max_speed ?? null, unit: "m/s" },
+      { label: "Max Velocity", value: latestGps?.max_speed ?? null, unit: "mph" },
       { label: "% Max Velocity", value: pctMaxVelocity, unit: "%" },
       { label: "Collision Load", value: latestGps?.collision_load ?? null, unit: "AU" },
     ]
     : [
-      { label: "Total Distance", value: latestGps?.total_distance ?? null, unit: "m" },
-      { label: "HSR", value: latestGps?.high_speed_running ?? null, unit: "m" },
-      { label: "Zone 6 Sprint Distance", value: latestGps?.distance_zone_6 ?? null, unit: "m" },
+      { label: "Total Distance", value: latestGps?.total_distance ?? null, unit: "yd" },
+      { label: "HSR", value: latestGps?.high_speed_running ?? null, unit: "yd" },
+      { label: "Zone 6 Sprint Distance", value: latestGps?.distance_zone_6 ?? null, unit: "yd" },
       { label: "Zone 4-6 Accelerations", value: latestGps?.accelerations_zone_4_6 ?? null },
       { label: "Zone 4-6 Decelerations", value: latestGps?.decelerations_zone_4_6 ?? null },
       { label: "DSL", value: latestGps?.dynamic_stress_load ?? null, unit: "AU" },
-      { label: "HML Distance", value: latestGps?.hml_distance ?? null, unit: "m" },
-      { label: "HMLD Per Minute", value: latestGps?.hmld_per_minute ?? null },
-      { label: "Max Velocity", value: latestGps?.max_speed ?? null, unit: "m/s" },
+      { label: "HML Distance", value: latestGps?.hml_distance ?? null, unit: "yd" },
+      { label: "HMLD Per Minute", value: latestGps?.hmld_per_minute ?? null, unit: "yd/min" },
+      { label: "Max Velocity", value: latestGps?.max_speed ?? null, unit: "mph" },
       { label: "% Max Velocity", value: pctMaxVelocity, unit: "%" },
       { label: "HSBI", value: hsbi },
       { label: "Momentum", value: momentum },
@@ -531,6 +538,7 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
     trends,
     fatigue: {
       jumpHeightCm: latestJump?.jump_height_cm ?? null,
+      jumpHeightIn: latestJump?.jump_height_in ?? null,
       rsiModified: latestJump?.rsi_modified ?? null,
       accelDecel46: rows.length > 0
         ? (rows[rows.length - 1].accelerations_zone_4_6 ?? 0) + (rows[rows.length - 1].decelerations_zone_4_6 ?? 0)
@@ -542,6 +550,7 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
         ? Math.max(latestNord.l_max_force ?? 0, latestNord.r_max_force ?? 0)
         : null,
     },
+    bodyWeightLb: kgToLbs(latestJump?.body_weight_kg ?? null),
     asymmetry: {
       forceFramePct: latestSqueeze?.max_imbalance ?? null,
       nordBordPct: latestNord?.max_imbalance ?? null,
