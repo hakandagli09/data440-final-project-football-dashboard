@@ -5,6 +5,7 @@ import PlayerStatusBadge from "@/components/PlayerStatusBadge";
 import type {
   SessionReportCell,
   SessionReportPlayerCard,
+  ReportMode,
   ReportUnit,
   SparklinePoint,
 } from "@/lib/session-report-queries";
@@ -82,6 +83,12 @@ function Sparkline({ points }: { points: SparklinePoint[] }) {
 
 interface PlayerSessionCardProps {
   card: SessionReportPlayerCard;
+  /**
+   * Single-day mode shows Daily / Running / Week Avg / %. Range mode
+   * collapses to Total / Week Avg / % because the Daily column has no
+   * meaning across a multi-day window.
+   */
+  mode: ReportMode;
 }
 
 /**
@@ -89,17 +96,22 @@ interface PlayerSessionCardProps {
  * Excel spreadsheet (Daily / Running Total / Weekly Avg / %) so coaches
  * can read it with zero retraining.
  */
-export default function PlayerSessionCard({ card }: PlayerSessionCardProps) {
+export default function PlayerSessionCard({ card, mode }: PlayerSessionCardProps) {
   const showStatus = card.status !== "cleared";
+  const isRange = mode === "range";
 
   // Latest-day yardage drives the sparkline summary label.
   // Sparkline values are already in yards (DB stores imperial directly).
   const latestDistanceYards = card.distanceSparkline.at(-1)?.value ?? 0;
 
   // Today's max speed is the most useful speed number to surface in the
-  // header — it's what the coach asks about first. DB value is already mph.
+  // header — it's what the coach asks about first. DB value is already
+  // mph. In range mode `daily` is null on every cell, so fall back to
+  // the runningTotal (which carries the range max for max-aggregation
+  // metrics) so the header still shows a useful number.
   const maxSpeedCell = card.cells.find((c: SessionReportCell) => c.key === "max_speed");
-  const maxSpeedMph: number | null = maxSpeedCell?.daily ?? null;
+  const maxSpeedMph: number | null =
+    (isRange ? maxSpeedCell?.runningTotal : maxSpeedCell?.daily) ?? null;
 
   return (
     <div className="rounded-xl border border-aa-border bg-aa-surface overflow-hidden print:break-inside-avoid print:border-gray-400">
@@ -139,8 +151,16 @@ export default function PlayerSessionCard({ card }: PlayerSessionCardProps) {
         <thead>
           <tr className="text-aa-text-dim uppercase tracking-wider">
             <th className="text-left py-1.5 px-3 font-medium">Metric</th>
-            <th className="text-right py-1.5 px-2 font-medium">Daily</th>
-            <th className="text-right py-1.5 px-2 font-medium">Running</th>
+            {/* Daily column only appears in single-day mode — in range
+                mode it would always show "—" and waste horizontal space. */}
+            {!isRange && (
+              <th className="text-right py-1.5 px-2 font-medium">Daily</th>
+            )}
+            {/* Header relabels in range mode so coaches read it as the
+                rollup across the picked window, not "week-to-date". */}
+            <th className="text-right py-1.5 px-2 font-medium">
+              {isRange ? "Total" : "Running"}
+            </th>
             <th className="text-right py-1.5 px-2 font-medium">Week Avg</th>
             <th className="text-right py-1.5 px-3 font-medium">%</th>
           </tr>
@@ -152,9 +172,11 @@ export default function PlayerSessionCard({ card }: PlayerSessionCardProps) {
               className={`border-t border-aa-border/40 ${idx % 2 === 1 ? "bg-aa-elevated/30" : ""}`}
             >
               <td className="text-left py-1.5 px-3 text-aa-text-secondary">{cell.label}</td>
-              <td className="text-right py-1.5 px-2 text-aa-text tabular-nums">
-                {formatMetricValue(cell.daily, cell.unit, cell.decimals)}
-              </td>
+              {!isRange && (
+                <td className="text-right py-1.5 px-2 text-aa-text tabular-nums">
+                  {formatMetricValue(cell.daily, cell.unit, cell.decimals)}
+                </td>
+              )}
               <td className="text-right py-1.5 px-2 text-aa-text-secondary tabular-nums">
                 {formatMetricValue(cell.runningTotal, cell.unit, cell.decimals)}
               </td>

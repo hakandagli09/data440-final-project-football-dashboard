@@ -26,6 +26,7 @@ export type SessionReportMetricKey =
   | "decelerations_zone_4_6"
   | "hml_distance"
   | "hmld_per_minute"
+  | "hml_efforts"
   | "fatigue_index"
   | "speed_intensity"
   | "dynamic_stress_load"
@@ -60,6 +61,10 @@ export const SESSION_REPORT_METRICS: SessionReportMetricDefinition[] = [
   { key: "decelerations_zone_4_6",  label: "Decels",          column: "decelerations_zone_4_6",  aggregation: "sum", unit: "count",            decimals: 0 },
   { key: "hml_distance",            label: "HMLD",            column: "hml_distance",            aggregation: "sum", unit: "distance",         decimals: 0 },
   { key: "hmld_per_minute",         label: "HMLD/Min",        column: "hmld_per_minute",         aggregation: "avg", unit: "distance_per_min", decimals: 2 },
+  // HML Efforts is StatSports' canonical "Explosive Efforts" count —
+  // a discrete tally of high-intensity efforts in a session, so sum
+  // across multiple sessions in a day/week.
+  { key: "hml_efforts",             label: "Explosive Efforts", column: "hml_efforts",            aggregation: "sum", unit: "count",            decimals: 0 },
   { key: "fatigue_index",           label: "Fatigue Index",   column: "fatigue_index",           aggregation: "avg", unit: "au",               decimals: 2 },
   { key: "speed_intensity",         label: "Speed Intensity", column: "speed_intensity",         aggregation: "sum", unit: "au",               decimals: 2 },
   { key: "dynamic_stress_load",     label: "DSL",             column: "dynamic_stress_load",     aggregation: "sum", unit: "au",               decimals: 0 },
@@ -100,12 +105,35 @@ export interface SessionReportPlayerCard {
   distanceSparkline: SparklinePoint[];
 }
 
+/**
+ * Date-selection mode for the report. "single" preserves Brian's
+ * Excel-style Daily / Running (week-to-date) / Week Avg / % layout.
+ * "range" hides the Daily column and treats the chosen window as a
+ * single rollup — Total = aggregate across the range; Week Avg stays
+ * the player's rolling 4-week baseline so % reads as "this window vs.
+ * a normal week".
+ */
+export type ReportMode = "single" | "range";
+
 export interface SessionReportData {
+  /** Mode-aware "as of" date — equals endDate. Drives header labels. */
   currentDate: string;
+  /** Selected window start (inclusive). For single-day mode equals endDate. */
+  startDate: string;
+  /** Selected window end (inclusive). */
+  endDate: string;
+  /** "single" | "range" — derived from startDate vs endDate at query time. */
+  mode: ReportMode;
+  /** Every distinct date with aggregated session data — feeds the calendar dot markers. */
   availableDates: string[];
+  /** ISO Monday of the week containing endDate. Used by single-day mode for week-to-date. */
   weekStart: string;
-  /** Unique session_title values seen on the selected date (practice day label). */
+  /** Unique session_title values seen on the selected day or in the selected range. */
   practiceDayLabels: string[];
+  /** All unique session_title values across the dataset — populates the filter dropdown. */
+  availableSessionTitles: string[];
+  /** Currently selected session_title filter, or null for "All Sessions". */
+  currentSessionTitle: string | null;
   /** Team-wide roster (filtered to only players with any data). */
   offense: SessionReportPlayerCard[];
   defense: SessionReportPlayerCard[];
@@ -182,27 +210,145 @@ function computeWeeklyBaseline(
  * Main entry point for the Reports page. Returns everything the client
  * needs to render the offense + defense session report grids.
  */
-export async function getSessionReportData(selectedDate?: string): Promise<SessionReportData> {
-  // Must paginate past PostgREST's 1000-row cap, otherwise we lose
-  // every session date older than ~6 weeks on a populated team table.
-  const dateRows = await fetchAllRows<{ session_date: string }>(() =>
+export async function getSessionReportData(
+  selectedDate?: string,
+  selectedSessionTitle?: string,
+  // Range mode params — when both are provided and differ from each
+  // other, the report switches to range mode (Daily column hidden,
+  // running total = sum across the range). When only `selectedDate`
+  // is given, behavior is identical to the original single-day report.
+  rangeStart?: string,
+  rangeEnd?: string
+): Promise<SessionReportData> {
+  // Pull every (session_date, session_title) pair so we can build both
+  // the date dropdown and the session-type filter, and scope dates to
+  // the chosen session type when one is selected. Must paginate past
+  // PostgREST's 1000-row cap, otherwise we lose older sessions on a
+  // populated team table.
+  //
+  // NOTE: Filter to `drill_title = 'Entire Session'` so the Reports page
+  // sees only the aggregated row shape (one row per player per session).
+  // Drill-level rows (drill_title = "RTP", "ST W", etc.) live in the
+  // same table but would N-multiply totals if summed alongside aggregated
+  // rows. Other consumers (group-queries, player-queries, etc.) are
+  // intentionally not changed here — to be addressed in a later pass.
+  const dateRows = await fetchAllRows<{ session_date: string; session_title: string | null }>(() =>
     supabase
       .from("gps_sessions")
-      .select("session_date")
+      .select("session_date, session_title")
+      .eq("drill_title", "Entire Session")
       .order("session_date", { ascending: false })
   );
 
-  const availableDates = Array.from(new Set(dateRows.map((r) => r.session_date)));
-  const currentDate = selectedDate && availableDates.includes(selectedDate)
-    ? selectedDate
-    : (availableDates[0] ?? "");
+  // Normalize titles (strip surrounding whitespace; treat empty as null)
+  // so a stray export quirk doesn't fragment the dropdown.
+  const normalizedTitle = (t: string | null | undefined): string | null => {
+    if (!t) return null;
+    const trimmed = t.trim();
+    return trimmed.length === 0 ? null : trimmed;
+  };
+
+  // Resolution order (rewritten so the session-title dropdown can be
+  // scoped to the active window):
+  //   1. Resolve the report window FIRST, treating the URL's
+  //      session_title as a *preference* used only for the latest-day
+  //      fallback (so "?session_title=Full Pads" with no date still
+  //      lands on the latest Full Pads day).
+  //   2. Build `availableSessionTitles` from the rows inside that
+  //      window — refining the dropdown to the user's current view.
+  //   3. Validate `currentSessionTitle` against the window-scoped list
+  //      (silently falls back to null when the URL combo is internally
+  //      inconsistent — e.g. range + title with no overlap — rather
+  //      than rendering empty cards).
+  //   4. `availableDates` stays scoped by `currentSessionTitle` so the
+  //      calendar dot-markers continue to highlight every date with
+  //      data for the current type across the whole season.
+
+  // All distinct session dates (already DESC-ordered by the SQL above).
+  const allDates = Array.from(new Set(dateRows.map((r) => r.session_date)));
+
+  // Latest date for the currently-requested session_title — used only
+  // as a fallback when the URL omits an explicit date, so the user
+  // lands on the most recent day matching their preferred type.
+  const datesForRequestedTitle = selectedSessionTitle
+    ? Array.from(
+        new Set(
+          dateRows
+            .filter((r) => normalizedTitle(r.session_title) === selectedSessionTitle)
+            .map((r) => r.session_date)
+        )
+      )
+    : [];
+  const latestForRequestedTitle = datesForRequestedTitle[0] ?? "";
+  const latestOverall = allDates[0] ?? "";
+
+  // Window resolution (independent of session_title beyond the fallback).
+  let endDate = "";
+  let startDate = "";
+  if (rangeStart && rangeEnd) {
+    // Caller-provided range. Normalize so end is always >= start.
+    endDate = rangeEnd >= rangeStart ? rangeEnd : rangeStart;
+    startDate = rangeEnd >= rangeStart ? rangeStart : rangeEnd;
+  } else if (selectedDate && allDates.includes(selectedDate)) {
+    endDate = selectedDate;
+    startDate = selectedDate;
+  } else {
+    // No explicit date — prefer "latest day with the requested title",
+    // otherwise the global latest day with any data.
+    const fallback = latestForRequestedTitle || latestOverall;
+    endDate = fallback;
+    startDate = fallback;
+  }
+
+  // Session titles that actually appear inside the resolved window.
+  // This is what populates the Session Type dropdown — refines the
+  // filter to only the types relevant to the user's current view.
+  const availableSessionTitles = Array.from(
+    new Set(
+      dateRows
+        .filter((r) => r.session_date >= startDate && r.session_date <= endDate)
+        .map((r) => normalizedTitle(r.session_title))
+        .filter((t): t is string => t !== null)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+  // Validate the URL-requested title against the window-scoped list.
+  // If the user's requested title isn't in the window, silently fall
+  // back to "All Sessions" so the report still shows meaningful data.
+  const currentSessionTitle =
+    selectedSessionTitle && availableSessionTitles.includes(selectedSessionTitle)
+      ? selectedSessionTitle
+      : null;
+
+  // Available dates feed the calendar's dot-marker layer — show every
+  // date with data for the current type across the entire season so
+  // the user can see (and navigate to) days outside the active window.
+  const availableDates = Array.from(
+    new Set(
+      dateRows
+        .filter((r) =>
+          currentSessionTitle ? normalizedTitle(r.session_title) === currentSessionTitle : true
+        )
+        .map((r) => r.session_date)
+    )
+  );
+
+  // `currentDate` is the "as of" date used for headers — equals endDate.
+  const currentDate = endDate;
+  // Range mode kicks in only when the window spans multiple days.
+  const mode: ReportMode = startDate && endDate && startDate !== endDate ? "range" : "single";
 
   if (!currentDate) {
     return {
       currentDate: "",
+      startDate: "",
+      endDate: "",
+      mode: "single",
       availableDates: [],
       weekStart: "",
       practiceDayLabels: [],
+      availableSessionTitles,
+      currentSessionTitle,
       offense: [],
       defense: [],
       injuredRehab: [],
@@ -210,10 +356,14 @@ export async function getSessionReportData(selectedDate?: string): Promise<Sessi
   }
 
   const weekStart = getWeekStart(currentDate);
-  // Pull four weeks of history PLUS the current week so we can compute
-  // both the rolling baseline and the running-total simultaneously.
-  const baselineWindowStart = subtractDays(weekStart, 28);
-  // Sparkline window (last 7 days ending on the selected date).
+  // For single-day mode the history window must reach back 4 weeks
+  // before the start of the current ISO week so we can compute the
+  // rolling baseline. For range mode the same baseline is anchored at
+  // the start of the range's earliest ISO week — that way the player's
+  // "typical week" always reflects the period leading up to the window.
+  const rangeWeekStart = getWeekStart(startDate);
+  const baselineWindowStart = subtractDays(rangeWeekStart, 28);
+  // Sparkline window (last 7 days ending on the report's "as of" date).
   const sparkStart = subtractDays(currentDate, 6);
 
   const columnList = SESSION_REPORT_METRICS.map((m) => m.column).join(", ");
@@ -228,13 +378,16 @@ export async function getSessionReportData(selectedDate?: string): Promise<Sessi
       .from("injuries")
       .select("player_id, status, expected_return, updated_at")
       .order("updated_at", { ascending: false }),
-    // Drill-level GPS rows routinely exceed 1000 over a 4-week window
-    // (a single full-pads practice is ~400 rows), so page the history
-    // fetch rather than relying on a plain .select().
+    // Filter to aggregated rows only (drill_title = "Entire Session") —
+    // see the comment on `dateRows` above for the rationale. Pagination
+    // is still required because a populated roster produces ~30+
+    // aggregated rows per session, easily crossing PostgREST's 1000-row
+    // cap over a 4-week window.
     fetchAllRows<Record<string, unknown>>(() =>
       supabase
         .from("gps_sessions")
         .select(`player_id, session_date, session_title, ${columnList}`)
+        .eq("drill_title", "Entire Session")
         .gte("session_date", baselineWindowStart)
         .lte("session_date", currentDate)
     ),
@@ -243,7 +396,13 @@ export async function getSessionReportData(selectedDate?: string): Promise<Sessi
   // Supabase's typed client can't validate dynamically interpolated
   // column lists, so cast through `unknown` to keep the runtime shape
   // while shedding the compile-time ParserError type.
-  const history = (historyRows as unknown) as GpsRow[];
+  const historyAll = (historyRows as unknown) as GpsRow[];
+  // Apply the session-title filter once up front — every downstream
+  // aggregation (daily, running total, 4-week baseline, sparkline) then
+  // automatically scopes to the selected session type.
+  const history = currentSessionTitle
+    ? historyAll.filter((r) => normalizedTitle(r.session_title) === currentSessionTitle)
+    : historyAll;
   const players = (playersRows ?? []) as Array<{ id: string; name: string; position: string | null }>;
 
   // Latest injury status per player (first occurrence wins because we
@@ -258,11 +417,14 @@ export async function getSessionReportData(selectedDate?: string): Promise<Sessi
     }
   }
 
-  // Collect today's session titles for the "practice day" label.
+  // Collect session titles for the "practice day" label. In single-day
+  // mode this is just the one date; in range mode it's the union across
+  // every day in the range — useful to surface "this stretch covered
+  // Helmets + Full Pads + Shells" at a glance.
   const practiceDayLabels = Array.from(
     new Set(
       history
-        .filter((r) => r.session_date === currentDate && r.session_title)
+        .filter((r) => r.session_date >= startDate && r.session_date <= endDate && r.session_title)
         .map((r) => (r.session_title as string).trim())
         .filter(Boolean)
     )
@@ -276,20 +438,38 @@ export async function getSessionReportData(selectedDate?: string): Promise<Sessi
     // render empty cards and clutter the grid.
     if (playerHistory.length === 0) continue;
 
+    // Single-day mode keeps the original semantics (Daily = that day,
+    // Running = week-to-date through that day). Range mode treats the
+    // selected window as the rollup unit — Daily is null (the column
+    // hides on the client) and Running becomes the aggregate across
+    // the entire range. Weekly Avg stays a player's typical week in
+    // both modes so % reads as "this period vs. a normal week".
     const todayRows = playerHistory.filter((r) => r.session_date === currentDate);
     const weekRows = playerHistory.filter(
       (r) => r.session_date >= weekStart && r.session_date <= currentDate
     );
+    const rangeRows = playerHistory.filter(
+      (r) => r.session_date >= startDate && r.session_date <= endDate
+    );
 
     const cells: SessionReportCell[] = SESSION_REPORT_METRICS.map((metric) => {
-      const daily = aggregate(todayRows.map((r) => num(r[metric.column])), metric.aggregation);
-      const runningTotal = aggregate(weekRows.map((r) => num(r[metric.column])), metric.aggregation);
+      const daily =
+        mode === "single"
+          ? aggregate(todayRows.map((r) => num(r[metric.column])), metric.aggregation)
+          : null;
+      const runningTotal =
+        mode === "single"
+          ? aggregate(weekRows.map((r) => num(r[metric.column])), metric.aggregation)
+          : aggregate(rangeRows.map((r) => num(r[metric.column])), metric.aggregation);
+      // Baseline is always anchored to the start of the report window
+      // so the comparison week is always strictly *prior* to the data
+      // shown in the Daily / Running columns.
       const weeklyAverage = computeWeeklyBaseline(
         playerHistory,
         player.id,
         metric.column,
         metric.aggregation,
-        weekStart
+        rangeWeekStart
       );
 
       const pctOfWeeklyAvg =
@@ -350,9 +530,14 @@ export async function getSessionReportData(selectedDate?: string): Promise<Sessi
 
   return {
     currentDate,
+    startDate,
+    endDate,
+    mode,
     availableDates,
     weekStart,
     practiceDayLabels,
+    availableSessionTitles,
+    currentSessionTitle,
     offense: activeCards.filter((c) => c.side === "offense"),
     defense: activeCards.filter((c) => c.side === "defense"),
     injuredRehab,

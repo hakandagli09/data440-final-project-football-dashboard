@@ -132,3 +132,69 @@ body {
 .drop-active {
   animation: drop-pulse 1.5s ease-in-out infinite;
 }
+
+/* ── react-day-picker (calendar popover) dark theme ───── */
+/* The library ships with light-mode CSS; these rules override the
+   variables and a handful of element selectors so the calendar matches
+   our Bloomberg-meets-ESPN aesthetic without forking the library. */
+.aa-day-picker {
+  --rdp-accent-color: #00f0ff;
+  --rdp-accent-background-color: rgba(0, 240, 255, 0.18);
+  --rdp-background-color: transparent;
+  --rdp-day-height: 28px;
+  --rdp-day-width: 28px;
+  --rdp-day_button-border-radius: 4px;
+  --rdp-day_button-height: 28px;
+  --rdp-day_button-width: 28px;
+  --rdp-disabled-opacity: 0.3;
+  --rdp-outside-opacity: 0.4;
+  --rdp-today-color: #ff6b35;
+  --rdp-range_start-background: #00f0ff;
+  --rdp-range_end-background: #00f0ff;
+  --rdp-range_start-color: #07080a;
+  --rdp-range_end-color: #07080a;
+  --rdp-range_middle-background-color: rgba(0, 240, 255, 0.18);
+  --rdp-range_middle-color: #e8eaed;
+}
+
+/* Days that have aggregated session data — small accent dot underneath
+   the date so coaches can tell at a glance which calendar squares are
+   "real" practice days. */
+.aa-day-has-data > button {
+  position: relative;
+}
+.aa-day-has-data > button::after {
+  content: "";
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #00f0ff;
+  opacity: 0.85;
+}
+
+/* Hide the dot on selected days — the cyan fill already tells the story
+   and the dot would clash visually. */
+.aa-day-selected.aa-day-has-data > button::after,
+.aa-day-range-edge.aa-day-has-data > button::after,
+.aa-day-range-mid.aa-day-has-data > button::after {
+  display: none;
+}
+
+/* Today gets the warm-accent ring so it's distinguishable from selected. */
+.aa-day-today > button {
+  box-shadow: inset 0 0 0 1px #ff6b35;
+}
+
+/* Nav arrows + caption — use mono font + dim color to match the topbar. */
+.aa-day-picker .rdp-button_previous,
+.aa-day-picker .rdp-button_next {
+  color: #98a0b4;
+}
+.aa-day-picker .rdp-button_previous:hover,
+.aa-day-picker .rdp-button_next:hover {
+  color: #00f0ff;
+}

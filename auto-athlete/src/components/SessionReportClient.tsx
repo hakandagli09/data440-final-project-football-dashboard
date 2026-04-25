@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import PlayerSessionCard from "@/components/PlayerSessionCard";
+import ReportDateRangePicker from "@/components/ReportDateRangePicker";
 import type { SessionReportData } from "@/lib/session-report-queries";
 import { formatSessionDate, formatSessionDateUpper } from "@/lib/date-utils";
 
@@ -80,7 +81,18 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
               SESSION REPORT
             </h1>
             <p className="mt-1 text-sm text-aa-text-secondary">
-              Coach-facing summary for {formatSessionDate(data.currentDate)} · {totalsLabel}
+              Coach-facing summary for{" "}
+              {data.mode === "range"
+                ? `${formatSessionDate(data.startDate)} → ${formatSessionDate(data.endDate)}`
+                : formatSessionDate(data.currentDate)}
+              {data.currentSessionTitle && (
+                <>
+                  {" · "}
+                  <span className="text-aa-accent">{data.currentSessionTitle}</span>
+                </>
+              )}
+              {" · "}
+              {totalsLabel}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -91,15 +103,41 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
             >
               Print / PDF
             </button>
+            {/* Session-type filter — scopes the entire report (dates list,
+                daily/running totals, and the 4-week baseline) to a single
+                practice type so totals reflect like-for-like comparisons. */}
             <div className="relative">
               <select
-                value={data.currentDate}
-                onChange={(e) => router.replace(`/dashboard/reports?date=${e.target.value}`)}
+                value={data.currentSessionTitle ?? ""}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  // Preserve the active date window when changing
+                  // session type. Range mode keeps start+end; single
+                  // mode keeps the selected day. Without this, picking
+                  // a new title (or "All Sessions") would reset the
+                  // URL and silently bounce the user back to the
+                  // global latest day — losing the range they had set.
+                  const params = new URLSearchParams();
+                  if (data.mode === "range") {
+                    params.set("start", data.startDate);
+                    params.set("end", data.endDate);
+                  } else if (data.currentDate) {
+                    params.set("date", data.currentDate);
+                  }
+                  if (next) {
+                    params.set("session_title", next);
+                  }
+                  const qs = params.toString();
+                  router.replace(qs ? `/dashboard/reports?${qs}` : `/dashboard/reports`);
+                }}
                 className="appearance-none flex items-center gap-2 px-4 py-2 pr-8 rounded-lg border border-aa-border bg-aa-surface text-xs font-mono text-aa-text-secondary hover:border-aa-border-bright transition-colors cursor-pointer"
               >
-                {data.availableDates.map((d) => (
-                  <option key={d} value={d} className="bg-aa-surface text-aa-text">
-                    {formatSessionDate(d)}
+                <option value="" className="bg-aa-surface text-aa-text">
+                  All Sessions
+                </option>
+                {data.availableSessionTitles.map((t) => (
+                  <option key={t} value={t} className="bg-aa-surface text-aa-text">
+                    {t}
                   </option>
                 ))}
               </select>
@@ -110,9 +148,34 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
                 stroke="currentColor"
                 strokeWidth={1.5}
               >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M6 12h12M9.75 17.25h4.5" />
               </svg>
             </div>
+            <ReportDateRangePicker
+              startDate={data.startDate}
+              endDate={data.endDate}
+              availableDates={data.availableDates}
+              onSelectSingle={(d) => {
+                // Preserve the active session-title filter on every
+                // date change so the user doesn't have to re-pick the
+                // practice type after every navigation.
+                const params = new URLSearchParams();
+                params.set("date", d);
+                if (data.currentSessionTitle) {
+                  params.set("session_title", data.currentSessionTitle);
+                }
+                router.replace(`/dashboard/reports?${params.toString()}`);
+              }}
+              onSelectRange={(start, end) => {
+                const params = new URLSearchParams();
+                params.set("start", start);
+                params.set("end", end);
+                if (data.currentSessionTitle) {
+                  params.set("session_title", data.currentSessionTitle);
+                }
+                router.replace(`/dashboard/reports?${params.toString()}`);
+              }}
+            />
           </div>
         </div>
 
@@ -147,7 +210,11 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
       </div>
 
       <ReportHeaderBanner
-        dateLabel={formatSessionDateUpper(data.currentDate)}
+        dateLabel={
+          data.mode === "range"
+            ? `${formatSessionDateUpper(data.startDate)} → ${formatSessionDateUpper(data.endDate)}`
+            : formatSessionDateUpper(data.currentDate)
+        }
         practiceDay={practiceDay}
         opponent={opponent}
         sides={tab}
@@ -157,7 +224,12 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
         <ReportSection
           title="Offense"
           cards={data.offense}
-          emptyMessage="No offensive players with data on this date."
+          mode={data.mode}
+          emptyMessage={
+            data.mode === "range"
+              ? "No offensive players with data in this range."
+              : "No offensive players with data on this date."
+          }
         />
       )}
 
@@ -165,7 +237,12 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
         <ReportSection
           title="Defense"
           cards={data.defense}
-          emptyMessage="No defensive players with data on this date."
+          mode={data.mode}
+          emptyMessage={
+            data.mode === "range"
+              ? "No defensive players with data in this range."
+              : "No defensive players with data on this date."
+          }
         />
       )}
 
@@ -174,6 +251,7 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
           title="Injured / Rehab"
           subtitle="Excluded from position averages"
           cards={data.injuredRehab}
+          mode={data.mode}
           emptyMessage=""
           tone="warn"
         />
@@ -232,12 +310,15 @@ function ReportSection({
   title,
   subtitle,
   cards,
+  mode,
   emptyMessage,
   tone,
 }: {
   title: string;
   subtitle?: string;
   cards: SessionReportData["offense"];
+  /** Current report mode — controls whether cards show the Daily column. */
+  mode: SessionReportData["mode"];
   emptyMessage: string;
   tone?: "warn";
 }) {
@@ -266,7 +347,7 @@ function ReportSection({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 print:grid-cols-2">
           {cards.map((card) => (
-            <PlayerSessionCard key={card.playerId} card={card} />
+            <PlayerSessionCard key={card.playerId} card={card} mode={mode} />
           ))}
         </div>
       )}
