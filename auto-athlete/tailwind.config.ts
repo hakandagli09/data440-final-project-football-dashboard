@@ -1,5 +1,19 @@
 import type { Config } from "tailwindcss";
 
+/**
+ * Tailwind config — token bindings live in CSS variables (see
+ * `src/app/globals.css`). Each `aa-*` color references a space-separated
+ * RGB triple defined per theme (`:root` for dark, `[data-theme="light"]`
+ * for light, `@media print` to force light during printing).
+ *
+ * The `rgb(var(--token) / <alpha-value>)` syntax preserves Tailwind's
+ * alpha-modifier classes (e.g. `bg-aa-success/15`) — without this exact
+ * shape the alpha modifier silently breaks.
+ *
+ * Two pre-blended muted variants (`aa-accent-muted`, `aa-warm-muted`)
+ * stay as raw `var()` references because they bake their own alpha and
+ * don't need to participate in the modifier system.
+ */
 const config: Config = {
   content: [
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
@@ -7,29 +21,33 @@ const config: Config = {
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
     "./node_modules/@tremor/**/*.{js,ts,jsx,tsx}",
   ],
+  // We theme via the `data-theme` attribute on <html>; Tailwind's
+  // `dark:` variant remains class-based for any legacy usage but is not
+  // the primary mechanism — the CSS-variable swap drives all colors.
   darkMode: "class",
   theme: {
     extend: {
       colors: {
-        // Core palette — ESPN meets Bloomberg Terminal
-        "aa-bg": "#07080a",
-        "aa-surface": "#0f1117",
-        "aa-elevated": "#181b25",
-        "aa-border": "#1e2231",
-        "aa-border-bright": "#2a2f42",
-        "aa-text": "#e8eaed",
-        "aa-text-secondary": "#8b8fa3",
-        "aa-text-dim": "#555a6e",
-        // Accent — electric cyan for that sports-tech edge
-        "aa-accent": "#00f0ff",
-        "aa-accent-muted": "#00f0ff20",
-        // Warm accent — highlight plays, alerts
-        "aa-warm": "#ff6b35",
-        "aa-warm-muted": "#ff6b3520",
-        // Semantic
-        "aa-success": "#00e676",
-        "aa-warning": "#ffab00",
-        "aa-danger": "#ff1744",
+        // Surface scale
+        "aa-bg": "rgb(var(--aa-bg) / <alpha-value>)",
+        "aa-surface": "rgb(var(--aa-surface) / <alpha-value>)",
+        "aa-elevated": "rgb(var(--aa-elevated) / <alpha-value>)",
+        "aa-border": "rgb(var(--aa-border) / <alpha-value>)",
+        "aa-border-bright": "rgb(var(--aa-border-bright) / <alpha-value>)",
+        // Text scale
+        "aa-text": "rgb(var(--aa-text) / <alpha-value>)",
+        "aa-text-secondary": "rgb(var(--aa-text-secondary) / <alpha-value>)",
+        "aa-text-dim": "rgb(var(--aa-text-dim) / <alpha-value>)",
+        // Accents
+        "aa-accent": "rgb(var(--aa-accent) / <alpha-value>)",
+        "aa-warm": "rgb(var(--aa-warm) / <alpha-value>)",
+        // Pre-blended translucent variants (no alpha modifier support)
+        "aa-accent-muted": "var(--aa-accent-muted)",
+        "aa-warm-muted": "var(--aa-warm-muted)",
+        // Semantic status
+        "aa-success": "rgb(var(--aa-success) / <alpha-value>)",
+        "aa-warning": "rgb(var(--aa-warning) / <alpha-value>)",
+        "aa-danger": "rgb(var(--aa-danger) / <alpha-value>)",
       },
       fontFamily: {
         display: ["var(--font-bebas)", "sans-serif"],
@@ -37,10 +55,12 @@ const config: Config = {
         mono: ["var(--font-jetbrains)", "monospace"],
       },
       backgroundImage: {
+        // Both grid and glow patterns now follow the active theme via
+        // CSS variables, so they desaturate cleanly in light/print modes.
         "grid-pattern":
-          "linear-gradient(to right, #1e223108 1px, transparent 1px), linear-gradient(to bottom, #1e223108 1px, transparent 1px)",
+          "linear-gradient(to right, rgb(var(--aa-border) / 0.03) 1px, transparent 1px), linear-gradient(to bottom, rgb(var(--aa-border) / 0.03) 1px, transparent 1px)",
         "glow-accent":
-          "radial-gradient(ellipse at 50% 0%, #00f0ff08 0%, transparent 60%)",
+          "radial-gradient(ellipse at 50% 0%, rgb(var(--aa-accent) / 0.03) 0%, transparent 60%)",
       },
       animation: {
         "pulse-glow": "pulse-glow 3s ease-in-out infinite",

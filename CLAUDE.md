@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Web app for Brian Kish (S&C coach, William & Mary Football) that automates his 5-hour manual Excel data workflow. He downloads CSVs from StatSports (GPS athlete monitoring), and our app generates a performance dashboard automatically.
+Web app for Brian Sutton (S&C coach, William & Mary Football) that automates his 5-hour manual Excel data workflow. He downloads CSVs from StatSports (GPS athlete monitoring), and our app generates a performance dashboard automatically.
 
 **Course:** DATA 440 Final Project
 
@@ -14,96 +14,6 @@ Web app for Brian Kish (S&C coach, William & Mary Football) that automates his 5
 - **Database:** Supabase (PostgreSQL + auth + file storage)
 - **Hosting:** Vercel
 - **Fonts:** Bebas Neue (display), Barlow (body), JetBrains Mono (data/mono)
-
-## Project Structure
-
-```
-/                               # repo root
-├── CLAUDE.md
-├── raw_data_good.csv           # StatSports GPS data (30 rows)
-├── raw_data2_good.csv          # Force plate CMJ data (313 rows)
-├── raw_data3_good.csv          # ForceFrame Hip AD/AB data (135 rows)
-├── raw_data4_good.csv          # NordBord Nordic hamstring data (177 rows)
-├── supabase/
-│   └── schema.sql              # Full database schema (run in Supabase SQL Editor)
-└── auto-athlete/               # Next.js app
-    ├── .env.local              # Supabase URL + anon key + service role key + Google AI Studio key
-    ├── package.json
-    ├── tailwind.config.ts      # Custom aa-* color tokens, fonts, animations
-    └── src/
-        ├── app/
-        │   ├── layout.tsx              # Root layout (fonts, dark mode)
-        │   ├── page.tsx                # / → redirects to /dashboard
-        │   ├── globals.css             # Dark theme, noise overlay, card glow, scrollbar
-        │   ├── api/
-        │   │   ├── upload/route.ts     # POST /api/upload — CSV parse + Supabase insert
-        │   │   ├── uploads/route.ts    # GET /api/uploads — upload history + player breakdown
-        │   │   └── uploads/[id]/route.ts # DELETE /api/uploads/:id — hard delete (cascade)
-        │   ├── dashboard/
-        │   │   ├── layout.tsx          # Sidebar + TopBar chrome
-        │   │   ├── page.tsx            # Main dashboard (live Supabase aggregates)
-        │   │   ├── players/page.tsx    # Players roster + filters + positional report sheets
-        │   │   ├── players/[id]/page.tsx # Player profile v1 (status, trends, fatigue, asymmetry, required metrics)
-        │   │   ├── sessions/page.tsx   # Stub page (coming soon + session count)
-        │   │   └── reports/page.tsx    # Stub page (coming soon)
-        │   ├── upload/
-        │   │   ├── layout.tsx          # Sidebar + TopBar chrome (same as dashboard)
-        │   │   └── page.tsx            # Drag-and-drop CSV upload → calls /api/upload
-        │   └── data-management/
-        │       ├── layout.tsx          # Sidebar + TopBar chrome
-        │       └── page.tsx            # Upload table + filter + expand + delete
-        ├── components/
-        │   ├── Sidebar.tsx             # Fixed left nav (220px), route-aware active state
-        │   ├── TopBar.tsx              # Sticky header (system status, player search + redirect, avatar)
-        │   ├── KPICard.tsx             # Animated metric card with sparkline
-        │   ├── DashboardClient.tsx     # Dashboard UI renderer
-        │   ├── DateSelector.tsx        # Session date dropdown
-        │   ├── PlayersClient.tsx       # Players table filters + status controls + positional report tables
-        │   ├── PlayerStatusBadge.tsx   # Status badge UI
-        │   └── PlayerStatusSelect.tsx  # Status update dropdown
-        └── lib/
-            ├── supabase.ts             # Client-side Supabase client (anon key only)
-            ├── supabase-server.ts      # Server-side Supabase client (service role key)
-            ├── queries.ts              # Dashboard data queries/aggregations
-            ├── date-utils.ts           # Timezone-safe date formatting and arithmetic
-            ├── csv-parser.ts           # Auto-detect CSV type, map columns to DB schema
-            ├── player-queries.ts       # Players list/profile queries + readiness/flags
-            ├── position-groups.ts      # Position group mapping helper
-            ├── derived-metrics.ts      # Shared derived metric helpers
-            └── group-queries.ts        # Positional report-sheet selectors (daily/weekly)
-```
-
-## Current State
-
-**Live dashboard + CSV upload + data management are built.** Dashboard reads real Supabase data; upload pipeline is functional for all 4 CSV types.
-
-What exists:
-
-- `/dashboard` — KPI cards, speed zones, leaderboard, ACWR, session info, and alert card backed by live Supabase queries (`src/lib/queries.ts`).
-- `/upload` — Drag-and-drop zone (react-dropzone) wired to `/api/upload`. Auto-detects CSV type, maps known columns, upserts players, inserts rows, and returns parse/insert diagnostics.
-- `POST /api/upload` — server route using service role key. Parses CSV -> upserts players -> creates upload record -> batch inserts data rows. Also returns a `duplicateWarning` when the same filename+type was previously uploaded.
-- `/data-management` — table of uploaded files with CSV type filters, expandable player breakdown per upload, parse/error details, and hard-delete action.
-- `GET /api/uploads` + `DELETE /api/uploads/:id` — list uploads and delete uploads (delete cascades to `gps_sessions`, `jump_tests`, `force_frame_tests`, `nordbord_tests` through `upload_id` FK).
-- `/dashboard/players` — roster page with search, advanced filters, status updates, and positional daily/weekly report sheets (Skills/Mids vs Bigs).
-- `/dashboard/players/[id]` — Player Profile v1 with status controls, sprint recency cards, 14-day trends, fatigue snapshot, asymmetry, flags, and required metrics.
-- `TopBar` player search — typeahead search by player name with direct redirect to `/dashboard/players/[id]`.
-- `/dashboard/sessions`, `/dashboard/reports` — working stub pages (no longer 404) with "coming soon" states.
-- `csv-parser.ts` — type detection (GPS: "Session Date", Jump: "Test Type"+"BW [KG]", ForceFrame: "Direction"+"Mode", NordBord: "Date UTC"+"L Max Torque"), full mappings, date/time conversion, BOM/whitespace handling.
-- `date-utils.ts` — timezone-safe formatting/arithmetic for date-only strings (`YYYY-MM-DD`) to prevent off-by-one display issues.
-- Dark sports analytics aesthetic remains: Bebas Neue headers, electric cyan accent (#00f0ff), noise texture, staggered entrance animations.
-- `.env.local` uses Supabase URL + anon key + service role key + Google AI Studio API key/model ID.
-
-What needs to be built:
-
-1. ~~**Deploy schema** — run `supabase/schema.sql` in the Supabase SQL Editor~~ ✓ Done
-2. ~~**Team Dashboard foundation** — replace mock dashboard with live Supabase data~~ ✓ Done (core cards/leaderboard/session info wired)
-3. ~~**Positional Dashboard** — averages by position group (QB, RB, WR, DB, etc.)~~ ✓ Done (v1 daily/weekly report sheets + group toggle)
-4. ~~**Player Profile** — individual metrics with 7-day rolling averages, fatigue module, asymmetry~~ ✓ Done (v1 implemented; advanced rehab/RTP/compare modules still pending)
-5. **Weekly Progression** — planned vs. actual training load over the season
-6. **Comparison Views** — day-to-day, week-to-week, custom range, full season
-7. **Flagging System** — z-score based alerts surfaced in the existing alert card
-8. ~~**Data Management page** — view/delete uploaded files + inspect upload errors~~ ✓ Done (re-upload shortcut still pending)
-9. **Injury Investigation** — prospective risk scoring, retrospective 14-day timeline
 
 ## Database Schema (Supabase)
 
@@ -123,39 +33,20 @@ All tables have RLS enabled: public read, authenticated/service_role write. All 
 
 ## CSV Data Sources
 
-### 1. StatSports GPS (`raw_data_good.csv`) — 54 columns
-
-Key: `Session Date`, `Session Title`, `Player Name`, `Player Primary Position`, `Total Distance`, `Max Speed`, `High Speed Running (Relative)`, `Accelerations (Relative)`, `Decelerations (Relative)`, `HML Distance`, `HMLD Per Minute`, `Fatigue Index`, `Speed Intensity`, `Dynamic Stress Load`, `Collision Load`, `Drill Title`
-
-### 2. Force Plate CMJ (`raw_data2_good.csv`) — 29 columns
-
-Key: `Name`, `Test Type`, `Date`, `BW [KG]`, `Jump Height (Imp-Mom) in Inches [in]`, `RSI-modified`, `Peak Power / BM`, `Eccentric Deceleration RFD`, asymmetry percentages
-
-### 3. ForceFrame Hip AD/AB (`raw_data3_good.csv`) — 77 columns
-
-Key: `Name`, `Date`, `Device`, `Direction` (Pull/Squeeze), `Position`, L/R max/avg force, imbalance %, RFD & impulse at 50ms–250ms windows
-
-### 4. NordBord Nordic (`raw_data4_good.csv`) — 72 columns
-
-Key: `Name`, `Date UTC`, `Device`, `Test`, L/R max/avg force, torque, imbalance %, RFD & impulse at 50ms–250ms windows
+Four CSV families: StatSports GPS, Force Plate CMJ, ForceFrame Hip AD/AB, NordBord Nordic hamstring. Type detection + column mapping live in `auto-athlete/src/lib/csv-parser.ts` (don't infer from filename — sniff headers).
 
 ## Design System
 
-- **Background:** `aa-bg` (#07080a) near-black
-- **Surfaces:** `aa-surface` (#0f1117), `aa-elevated` (#181b25)
-- **Accent:** `aa-accent` (#00f0ff) electric cyan
-- **Warm accent:** `aa-warm` (#ff6b35) for highlights/alerts
-- **Semantic:** `aa-success` (#00e676), `aa-warning` (#ffab00), `aa-danger` (#ff1744)
-- **Typography:** Bebas Neue for headings (all-caps), Barlow for body, JetBrains Mono for data
-- **Animations:** slide-up, fade-in, slide-in-left, count-up, pulse-glow (all in tailwind.config.ts)
-- **Aesthetic:** Bloomberg Terminal meets ESPN — dense data, dark theme, position filters, color-coded rows
+- **Tokens:** `aa-*` color tokens are CSS variables (see `auto-athlete/src/app/globals.css`). Three-layer system: primitive RGB triples → semantic `--aa-bg`/`--aa-surface`/`--aa-accent`/etc. → Tailwind classes (`bg-aa-bg`, `text-aa-success`, etc.). Use the Tailwind classes; never hardcode hex values.
+- **Themes:** `:root` = dark (default), `[data-theme="light"]` = neutral grayscale + status colors, `@media print` = forced light. `ThemeProvider` (`src/lib/theme-context.tsx`) toggles `<html data-theme>`.
+- **Typography:** Bebas Neue (display, all-caps), Barlow (body), JetBrains Mono (data).
+- **Aesthetic:** Bloomberg Terminal meets ESPN — dense data, color-coded rows, status colors carry meaning.
 
 ## Constraints
 
 - Never expose the Supabase secret/service-role key in frontend code — anon key only on client
 - All athlete data is private — Row Level Security (RLS) must be enabled on all tables
 - Build one feature at a time, keep changes modular
-- Supabase project: `eupueeealtffymlmmcgh.supabase.co`
 
 ## Development
 
@@ -445,101 +336,7 @@ When a player is in `rehab` or `return_to_play` status, their Player Profile pag
 
 ### AI Chat Assistant (Gemini)
 
-An LLM-powered chat panel where Brian can ask natural language questions about athlete data. The model (currently `gemini-3.1-pro-preview` via Google AI Studio, configurable through env vars) calls existing query functions as tools, fetches live Supabase data, and streams answers back.
-
-**Model:** Google AI Studio model via `GOOGLE_MODEL_ID` (currently `gemini-3.1-pro-preview`)
-**Host:** Google AI Studio (Gemini `generateContent` / `streamGenerateContent` REST API)
-**UI:** 420px slide-out panel on the right, accessible from TopBar
-
-**Current status:** Phase 1 through Phase 6 are implemented. The chat panel supports tool calling, streaming, retry/copy UX, suggested questions, session persistence, inline player/metric cards, and page-context awareness.
-
-#### Phase 1 — Backend Foundation
-
-Goal: A working `/api/chat` route that round-trips a message through Gemini and returns a response. No tools, no streaming — just proving the LLM connection works.
-
-- [x] **1.1** Add `GOOGLE_API_KEY` and `GOOGLE_MODEL_ID` to `.env.local` (server-only, no `NEXT_PUBLIC_` prefix)
-- [x] **1.2** Create `src/lib/chat-types.ts` — shared TypeScript types: `ChatRole`, `ChatMessage`, `ToolCall`, `ToolResult`, `ChatRequest`, `ChatResponse`, `ToolDefinition`
-- [x] **1.3** Create `src/lib/gemini.ts` — LLM client wrapper using raw `fetch` against Google AI Studio `generateContent` endpoint. Export `chatCompletion(messages, tools?)`. Handle 429/5xx with retries
-- [x] **1.4** Create `src/app/api/chat/route.ts` — POST endpoint accepting `{ messages }`, calls `chatCompletion()`, returns `NextResponse.json({ reply })`
-- [x] **1.5** Test manually with curl: `curl -X POST http://localhost:3000/api/chat -H 'Content-Type: application/json' -d '{"messages":[{"role":"user","content":"Hello"}]}'`
-
-#### Phase 2 — Tool Definitions
-
-Goal: Wrap existing query functions as callable tools so the LLM can fetch live data from Supabase. Test via curl — no UI yet.
-
-- [x] **2.1** Create `src/lib/chat-tools.ts` with tool schema definitions (JSON Schema format for OpenAI-compatible function calling):
-  - `get_dashboard_data` → `getDashboardData(date?)` from `src/lib/queries.ts`
-  - `get_available_session_dates` → `getAvailableSessionDates()` from `src/lib/queries.ts`
-  - `get_players_list` → `getPlayersList()` from `src/lib/player-queries.ts`
-  - `get_player_profile` → `getPlayerProfile(playerId)` from `src/lib/player-queries.ts`
-  - `get_position_report` → `getPositionReportData(date?)` from `src/lib/group-queries.ts`
-  - `get_grouped_daily_metrics` → `getGroupedDailyMetrics(date, group)` from `src/lib/group-queries.ts`
-  - `get_grouped_weekly_sums` → `getGroupedWeeklySums(weekStart, group)` from `src/lib/group-queries.ts`
-- [x] **2.2** Implement `executeTool(name, args)` dispatcher in `chat-tools.ts` — switch on tool name, call the corresponding query function, JSON.stringify the result (truncate at 15K chars if needed)
-- [x] **2.3** Update `gemini.ts` to pass tool definitions in the Gemini `tools` field
-- [x] **2.4** Update `api/chat/route.ts` with the tool-call loop: send → if tool_calls, execute each → append results → re-send (max 5 iterations) → return final text reply
-- [x] **2.5** Test: ask "What was the team average total distance on the most recent session?" via curl — should call `get_dashboard_data` and return a natural-language answer
-- [x] **2.6** Test multi-tool: ask "Show me the profile for the player with the most flags" — should call `get_players_list` then `get_player_profile`
-
-#### Phase 3 — Chat UI
-
-Goal: A slide-out chat panel in the dashboard. Brian can type a question and see an answer (no streaming yet — full response appears at once).
-
-- [x] **3.1** Add `slide-in-right` keyframe + animation to `tailwind.config.ts` (mirrors existing `slide-in-left`)
-- [x] **3.2** Create `src/components/ChatMessage.tsx` — user messages (right-aligned, cyan-tinted) and assistant messages (left-aligned, elevated surface). Loading state with pulse animation. Basic text formatting (bold, line breaks, lists)
-- [x] **3.3** Create `src/components/ChatInput.tsx` — auto-growing textarea, send on Enter (Shift+Enter for newline), disabled state while loading, send button with arrow icon
-- [x] **3.4** Create `src/components/ChatPanel.tsx` — fixed right panel (420px, z-50), header with title + close button, scrollable message area (auto-scroll to bottom), ChatInput pinned to bottom, semi-transparent backdrop overlay
-- [x] **3.5** Create `src/lib/chat-context.ts` + `src/components/ChatProvider.tsx` — React context providing `{ isChatOpen, toggleChat }` so TopBar and ChatPanel can share state
-- [x] **3.6** Modify `src/components/TopBar.tsx` — add chat toggle button (chat bubble icon) between notification bell and avatar
-- [x] **3.7** Modify `src/app/dashboard/layout.tsx` — wrap content in `<ChatProvider>`, render `<ChatPanel />` alongside existing layout
-- [x] **3.8** Test end-to-end: open dashboard → click chat button → type "How many players are on the roster?" → verify answer appears
-
-#### Phase 4 — System Prompt & Domain Context
-
-Goal: Make the LLM's answers genuinely useful for an S&C coach by giving it deep domain knowledge.
-
-- [x] **4.1** Create `src/lib/system-prompt.ts` — system prompt covering:
-  - Identity: AI assistant for Auto Athlete, user is S&C coach Brian Kish
-  - Data sources: GPS (StatSports), force plate (CMJ), force frame (hip AD/AB), NordBord (hamstring)
-  - Key metrics + formulas: EWMA (λ=0.28), HSBI, Momentum, ACWR, z-scores
-  - Position groups: Skills/Mids vs Bigs and their metric focus areas
-  - Flag thresholds: sprint recency (7d/10d), EWMA deviation (>1 SD), output z < −1.5, asymmetry > 10%
-  - Player status effects: injured/rehab excluded from flags, RTP uses pre-injury baseline
-  - Response formatting: use player names not IDs, include units, round appropriately
-- [x] **4.2** Export `buildSystemPrompt()` that dynamically injects today's date and the most recent session date
-- [x] **4.3** Update `api/chat/route.ts` to prepend system prompt as first message in every request
-- [x] **4.4** Test domain questions: "Which players have sprint recency flags?", "What's the team ACWR?", "Is anyone at risk for hamstring injury?"
-
-#### Phase 5 — Streaming & Polish
-
-Goal: Stream responses token-by-token for responsive feel. Add error handling, markdown rendering, and visual refinements.
-
-- [x] **5.1** Add `chatCompletionStream()` to `gemini.ts` using Gemini `streamGenerateContent` endpoint. Tool calls run non-streamed; only the final text response streams
-- [x] **5.2** Update `api/chat/route.ts` to return SSE stream (`text/event-stream`) with `data: {"token":"..."}\n\n` events and `data: [DONE]\n\n` terminator
-- [x] **5.3** Update `ChatPanel.tsx` to consume stream via `response.body.getReader()`, updating assistant message content incrementally. Show "Thinking..." during tool-call execution
-- [x] **5.4** Improve `ChatMessage.tsx` — basic markdown rendering (`**bold**`, line breaks, bullet/numbered lists), copy button on assistant messages, blinking cursor while streaming
-- [x] **5.5** Error handling UI — error message bubble (`border-aa-danger`), retry button that re-sends last user message
-- [x] **5.6** Visual polish — gradient header on panel, noise-overlay texture, `transition-transform duration-300` open/close, keyboard shortcut `Cmd+J` to toggle panel
-
-#### Phase 6 — Advanced Features
-
-Goal: Quality-of-life features. Each sub-phase is independent — implement in any order.
-
-**6A — Suggested Questions**
-- [x] **6A.1** Create `src/lib/chat-suggestions.ts` — categorized question arrays (general, player-specific, fatigue, position groups). Export `getSuggestions(hasMessages)` returning different suggestions for empty vs mid-conversation states
-- [x] **6A.2** Create `src/components/SuggestedQuestions.tsx` — horizontal scrollable row of pill-shaped chips, clickable to send
-- [x] **6A.3** Integrate into `ChatPanel.tsx` — starter suggestions in empty state, contextual follow-ups after first exchange
-
-**6B — Conversation Persistence**
-- [x] **6B.1** Persist messages to `sessionStorage` in `ChatPanel.tsx` — survives page navigation, clears on tab close. Add "Clear conversation" button in chat header
-
-**6C — Inline Data Cards**
-- [x] **6C.1** Define `:::player-card` and `:::metric-card` markers in system prompt for structured data blocks
-- [x] **6C.2** Parse markers in `ChatMessage.tsx` — render mini player cards (reuse `PlayerStatusBadge.tsx`) and KPI-style metric cards inline in chat, clickable to navigate
-
-**6D — Page-Context Awareness**
-- [x] **6D.1** In `ChatPanel.tsx`, detect current route via `usePathname()` and pass as context to the API (`{ messages, context: { page, playerId? } }`)
-- [x] **6D.2** Update `api/chat/route.ts` to incorporate page context into the system prompt dynamically
+Implemented. 420px slide-out panel from the TopBar. Calls Supabase query functions as tools and streams replies. Lives in `src/components/ChatPanel.tsx`, `src/app/api/chat/route.ts`, `src/lib/chat-tools.ts`, `src/lib/gemini.ts`, `src/lib/system-prompt.ts`. Model configurable via `GOOGLE_MODEL_ID` (currently a Gemini Google AI Studio model).
 
 CODING STYLE REQUIREMENTS:
 
@@ -548,8 +345,54 @@ CODING STYLE REQUIREMENTS:
 
 # To-Do
 
-- Change distance from M to Yards 
-- Meters per second to miles per hour 
-- Everything to American System for example
 
+## Units (American system)
+- Change distance from m to yards
+- Meters per second to miles per hour
+- Audit every metric/label end-to-end for unit consistency
+
+## Data ingest
+- Verify the new `Copy of 2025 W&M Football GPS Dashboard - RAW DATA.csv` (5,329 rows, 174 session dates, 78 players, 2023-08-31 → 2025-11-22, 35 game days tagged `Session Title = Game`) imports cleanly via `/upload` and populates `gps_sessions.session_title`
+- Wire in NordBord upload UI (L/R hamstring force + imbalance %)
+- Force plate (CMJ) upload — already supported in parser, confirm UI surfaces issues clearly
+
+## Session-title-aware flagging (this is the big one)
+- Brian's core complaint: today's flagging compares all sessions equally, so a Game gets flagged against a Helmets day. Fix by stratifying baselines by `session_title`.
+- Practice types to stratify on: `Game`, `Practice`, `Helmets`, `Shells`, `Full Pads`. Anything else = individual session with Coach Sutton — exclude from team flagging.
+- For each metric, baseline = same player's mean for that *same session_title*, not all sessions.
+- Drill down: when a player is "above average" on a Full Pads day, show which drill(s) drove it — split metrics by `drill_title`.
+- Replace 4-week running-total `%` column on Session Report with **% of game performance** (player's mean over `session_title = 'Game'` rows). This is what Brian actually wants.
+- Add a 4-practice progression visual (red/green/yellow/orange) so coach can verify low→high→low rest pattern across recent days. Flag when there are repetitive high days with no rest.
+- Treat `SB` (spring ball) as a season tag, not a session title.
+- Skip rainy days in flagging — they don't live-track in rain, so those gaps are expected, not deficits.
+
+## Position-group + drill filtering
+- Make the main dashboard splittable by position group (already partial via Skills/Mids vs Bigs)
+- On player profile, when a date is selected, auto-populate full-session metrics with a **drill dropdown** so coach can isolate per-drill performance
+- For Spring Ball reports specifically: HSR = Zone 4-6, Accels/Decels = Zone 4-6, Sprint Distance = Zone 6 (≥90% max velocity)
+- Reports should support a Mon-Sat running-total view
+
+## Metric set changes
+- Remove: `Fatigue Index`, `Speed Intensity` from default views
+- Rename `HML Efforts` → `Explosive Efforts` everywhere
+- Add: `Momentum` = highest top speed of the week × body weight
+- NordBord thresholds: imbalance > 2 = green, > 15 = red
+
+## Comparison & profile views
+- Period-of-time selector: "show best performance in [date range] for [position group]"
+- "Find player's fastest sprint in last 4 weeks" — single-player query against `max_speed`
+- Position group average + the day they hit their max
+- "When did player X hit ≥90% / ≥85% of their max speed" — already exists in flagging, surface as a profile chart
+- "What % of top speed are they hitting?" — running indicator over time
+- Same as above for distance
+- Sprint profile, lift profile, jump profile — selectable views inside Player Profile
+- Cross-season comparison: spring → summer growth, season-over-season
+
+## Visualizations
+- X/Y scatter plots for jump metrics (e.g. RSI vs concentric peak force) — see who lands where on the plot
+- Line graph: any metric over time, position-vs-individual overlay
+- Leaderboard report based on Brian's preferred metrics (define which metrics)
+
+## Account / setup
+- Document for the user how to create their own Supabase project + Google AI Studio key so they can deploy their own instance, not share the dev project
 

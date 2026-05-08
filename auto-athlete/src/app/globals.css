@@ -2,14 +2,77 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Base dark theme ────────────────────────────────────── */
-:root {
-  --background: #07080a;
-  --foreground: #e8eaed;
+/* ── Token system — three layers ────────────────────────────
+   1. Primitives (raw RGB triples) live nowhere — we collapse straight
+      to the semantic layer for now. Triples are stored space-separated
+      so Tailwind's alpha-modifier syntax `bg-aa-bg/50` keeps working
+      via `rgb(var(--aa-bg) / <alpha-value>)`.
+   2. Semantic tokens (purpose-named) live in `:root` (dark default)
+      and `[data-theme="light"]` (neutral grayscale + status).
+   3. Component layer is deferred — components consume Tailwind classes
+      that resolve through the semantic variables.
+   The `@media print` block at the bottom forces light values regardless
+   of the active theme so reports always print readable on white. */
+
+/* ── Dark theme (default) ───────────────────────────────── */
+:root,
+[data-theme="dark"] {
+  /* Surface scale */
+  --aa-bg: 7 8 10;
+  --aa-surface: 15 17 23;
+  --aa-elevated: 24 27 37;
+  --aa-border: 30 34 49;
+  --aa-border-bright: 42 47 66;
+  /* Text scale */
+  --aa-text: 232 234 237;
+  --aa-text-secondary: 139 143 163;
+  --aa-text-dim: 85 90 110;
+  /* Accents */
+  --aa-accent: 0 240 255;       /* electric cyan — sports-tech edge */
+  --aa-warm: 255 107 53;        /* warm orange — alerts / highlights */
+  /* Semantic status */
+  --aa-success: 0 230 118;
+  --aa-warning: 255 171 0;
+  --aa-danger: 255 23 68;
+  /* Pre-blended muted variants (kept as opaque RGBA strings since they
+     bake an alpha that doesn't compose well with Tailwind's modifier). */
+  --aa-accent-muted: rgba(0, 240, 255, 0.125);
+  --aa-warm-muted: rgba(255, 107, 53, 0.125);
+  /* Shorthand for legacy CSS that referenced --background/--foreground. */
+  --background: rgb(var(--aa-bg));
+  --foreground: rgb(var(--aa-text));
+  color-scheme: dark;
+}
+
+/* ── Light theme — neutral grayscale + vivid status ─────── */
+/* Goal: a coach who has never seen the app gets a calm, ink-cheap canvas
+   where only red/yellow/green carry meaning. Cyan/orange desaturate to
+   gray so nothing reads as "this team's brand." */
+[data-theme="light"] {
+  --aa-bg: 255 255 255;
+  --aa-surface: 247 248 250;
+  --aa-elevated: 238 240 244;
+  --aa-border: 225 228 234;
+  --aa-border-bright: 201 205 214;
+  --aa-text: 26 29 36;
+  --aa-text-secondary: 90 96 114;
+  --aa-text-dim: 138 144 160;
+  /* Accent + warm collapse to gray — no school branding leaks through. */
+  --aa-accent: 75 85 99;        /* gray-600 */
+  --aa-warm: 107 114 128;       /* gray-500 */
+  /* Status colors stay vivid but shift to deeper, ink-friendly tones. */
+  --aa-success: 22 163 74;      /* green-600 */
+  --aa-warning: 217 119 6;      /* amber-600 */
+  --aa-danger: 220 38 38;       /* red-600 */
+  --aa-accent-muted: rgba(75, 85, 99, 0.10);
+  --aa-warm-muted: rgba(107, 114, 128, 0.10);
+  --background: rgb(var(--aa-bg));
+  --foreground: rgb(var(--aa-text));
+  color-scheme: light;
 }
 
 html {
-  color-scheme: dark;
+  /* color-scheme is set per-theme on :root / [data-theme=light] above. */
 }
 
 body {
@@ -17,7 +80,7 @@ body {
   background: var(--background);
 }
 
-/* ── Scrollbar — dark, thin, unobtrusive ───────────────── */
+/* ── Scrollbar — inherits theme via variables ──────────── */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -26,17 +89,17 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e2231;
+  background: rgb(var(--aa-border));
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #2a2f42;
+  background: rgb(var(--aa-border-bright));
 }
 
 /* ── Selection highlight ───────────────────────────────── */
 ::selection {
-  background: #00f0ff30;
-  color: #e8eaed;
+  background: rgb(var(--aa-accent) / 0.18);
+  color: rgb(var(--aa-text));
 }
 
 /* ── Utility layers ────────────────────────────────────── */
@@ -47,6 +110,8 @@ body {
 }
 
 /* ── Noise texture overlay for depth ───────────────────── */
+/* Only visible on dark theme; light theme zeros out opacity to keep the
+   background crisp and ink-clean. */
 .noise-overlay::before {
   content: "";
   position: absolute;
@@ -55,6 +120,9 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
   pointer-events: none;
   z-index: 0;
+}
+[data-theme="light"] .noise-overlay::before {
+  opacity: 0;
 }
 
 /* ── Card hover glow ───────────────────────────────────── */
@@ -69,7 +137,7 @@ body {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, #00f0ff30, transparent);
+  background: linear-gradient(90deg, transparent, rgb(var(--aa-accent) / 0.18), transparent);
   opacity: 0;
   transition: opacity 0.3s ease;
 }
@@ -91,17 +159,33 @@ body {
 }
 
 /* ── Print styles ──────────────────────────────────────── */
-/* When the user prints (or saves as PDF) the Session Report, we want a
-   clean, high-contrast, paper-friendly layout — no sidebar, no topbar,
-   no dark theme background, and force cards to break cleanly. */
+/* Force the light theme variables onto :root during print. Every
+   component that uses bg-aa-*, text-aa-*, border-aa-* now resolves
+   through these values, so we don't need per-element !important
+   overrides. We still hide chrome (sidebar/topbar/chat) and force
+   browsers to print background colors so status cell tints survive. */
 @media print {
   @page {
     size: letter landscape;
     margin: 0.5in;
   }
-  html, body {
-    background: #fff !important;
-    color: #000 !important;
+  :root {
+    --aa-bg: 255 255 255;
+    --aa-surface: 255 255 255;
+    --aa-elevated: 247 248 250;
+    --aa-border: 209 213 219;
+    --aa-border-bright: 156 163 175;
+    --aa-text: 17 24 39;
+    --aa-text-secondary: 75 85 99;
+    --aa-text-dim: 107 114 128;
+    --aa-accent: 75 85 99;
+    --aa-warm: 107 114 128;
+    --aa-success: 22 163 74;
+    --aa-warning: 217 119 6;
+    --aa-danger: 220 38 38;
+    --aa-accent-muted: rgba(75, 85, 99, 0.10);
+    --aa-warm-muted: rgba(107, 114, 128, 0.10);
+    color-scheme: light;
   }
   /* Hide chrome that isn't useful on paper. */
   aside,
@@ -116,30 +200,40 @@ body {
     padding: 0 !important;
     max-width: none !important;
   }
-  /* Force colors for thresholded cells so the red/yellow/green scale
-     survives the print pipeline (browsers strip backgrounds by default). */
+  /* Force browsers to honor card tints + status cell colors. */
   * {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+    box-shadow: none !important;
+  }
+  /* Strip the noise overlay — it muddies print and wastes ink. */
+  .noise-overlay::before {
+    opacity: 0 !important;
   }
 }
 
 /* ── Drop zone pulse ───────────────────────────────────── */
 @keyframes drop-pulse {
-  0%, 100% { border-color: #00f0ff40; box-shadow: 0 0 0 0 #00f0ff20; }
-  50% { border-color: #00f0ff80; box-shadow: 0 0 20px 4px #00f0ff10; }
+  0%, 100% {
+    border-color: rgb(var(--aa-accent) / 0.25);
+    box-shadow: 0 0 0 0 rgb(var(--aa-accent) / 0.125);
+  }
+  50% {
+    border-color: rgb(var(--aa-accent) / 0.5);
+    box-shadow: 0 0 20px 4px rgb(var(--aa-accent) / 0.0625);
+  }
 }
 .drop-active {
   animation: drop-pulse 1.5s ease-in-out infinite;
 }
 
-/* ── react-day-picker (calendar popover) dark theme ───── */
-/* The library ships with light-mode CSS; these rules override the
-   variables and a handful of element selectors so the calendar matches
-   our Bloomberg-meets-ESPN aesthetic without forking the library. */
+/* ── react-day-picker (calendar popover) themed ──────── */
+/* The library ships with light-mode CSS; these rules feed our token
+   values into its own custom-property API so the calendar matches the
+   active theme instead of forking the library. */
 .aa-day-picker {
-  --rdp-accent-color: #00f0ff;
-  --rdp-accent-background-color: rgba(0, 240, 255, 0.18);
+  --rdp-accent-color: rgb(var(--aa-accent));
+  --rdp-accent-background-color: rgb(var(--aa-accent) / 0.18);
   --rdp-background-color: transparent;
   --rdp-day-height: 28px;
   --rdp-day-width: 28px;
@@ -148,13 +242,13 @@ body {
   --rdp-day_button-width: 28px;
   --rdp-disabled-opacity: 0.3;
   --rdp-outside-opacity: 0.4;
-  --rdp-today-color: #ff6b35;
-  --rdp-range_start-background: #00f0ff;
-  --rdp-range_end-background: #00f0ff;
-  --rdp-range_start-color: #07080a;
-  --rdp-range_end-color: #07080a;
-  --rdp-range_middle-background-color: rgba(0, 240, 255, 0.18);
-  --rdp-range_middle-color: #e8eaed;
+  --rdp-today-color: rgb(var(--aa-warm));
+  --rdp-range_start-background: rgb(var(--aa-accent));
+  --rdp-range_end-background: rgb(var(--aa-accent));
+  --rdp-range_start-color: rgb(var(--aa-bg));
+  --rdp-range_end-color: rgb(var(--aa-bg));
+  --rdp-range_middle-background-color: rgb(var(--aa-accent) / 0.18);
+  --rdp-range_middle-color: rgb(var(--aa-text));
 }
 
 /* Days that have aggregated session data — small accent dot underneath
@@ -172,11 +266,11 @@ body {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: #00f0ff;
+  background: rgb(var(--aa-accent));
   opacity: 0.85;
 }
 
-/* Hide the dot on selected days — the cyan fill already tells the story
+/* Hide the dot on selected days — the accent fill already tells the story
    and the dot would clash visually. */
 .aa-day-selected.aa-day-has-data > button::after,
 .aa-day-range-edge.aa-day-has-data > button::after,
@@ -184,17 +278,87 @@ body {
   display: none;
 }
 
+/* Selected / range-edge fill — paint these explicitly using our token
+   palette so the visual state doesn't depend on react-day-picker's
+   default range styling, which assumes start + end live in the same
+   visible month and collapses when they don't (e.g. across our two
+   side-by-side calendars). Highest specificity (`.aa-day-picker`
+   ancestor) so we win against the library's defaults. */
+.aa-day-picker .aa-day-selected > button,
+.aa-day-picker .aa-day-range-edge > button {
+  background: rgb(var(--aa-accent));
+  color: rgb(var(--aa-bg));
+  font-weight: 600;
+}
+.aa-day-picker .aa-day-selected > button:hover,
+.aa-day-picker .aa-day-range-edge > button:hover {
+  background: rgb(var(--aa-accent) / 0.85);
+}
+
+/* Range middle (days strictly between from and to). Same tint as the
+   selection highlight so the eye reads start → middle → end as one
+   continuous range. */
+.aa-day-picker .aa-day-range-mid > button {
+  background: rgb(var(--aa-accent) / 0.18);
+  color: rgb(var(--aa-text));
+  border-radius: 0;
+}
+
 /* Today gets the warm-accent ring so it's distinguishable from selected. */
 .aa-day-today > button {
-  box-shadow: inset 0 0 0 1px #ff6b35;
+  box-shadow: inset 0 0 0 1px rgb(var(--aa-warm));
 }
 
 /* Nav arrows + caption — use mono font + dim color to match the topbar. */
 .aa-day-picker .rdp-button_previous,
 .aa-day-picker .rdp-button_next {
-  color: #98a0b4;
+  color: rgb(var(--aa-text-secondary));
 }
 .aa-day-picker .rdp-button_previous:hover,
 .aa-day-picker .rdp-button_next:hover {
-  color: #00f0ff;
+  color: rgb(var(--aa-accent));
+}
+
+/* Month + year dropdowns (captionLayout="dropdown") — react-day-picker
+   renders these as native <select> elements. We restyle them so they
+   match the dark/light theme and don't fall back to OS chrome. */
+.aa-day-picker .rdp-dropdown_root {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.aa-day-picker .rdp-dropdown {
+  appearance: none;
+  background: rgb(var(--aa-elevated));
+  color: rgb(var(--aa-text));
+  border: 1px solid rgb(var(--aa-border));
+  border-radius: 4px;
+  font-family: var(--font-jetbrains), monospace;
+  font-size: 11px;
+  padding: 3px 18px 3px 6px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.aa-day-picker .rdp-dropdown:hover {
+  border-color: rgb(var(--aa-border-bright));
+  color: rgb(var(--aa-accent));
+}
+.aa-day-picker .rdp-dropdown:focus {
+  outline: none;
+  border-color: rgb(var(--aa-accent) / 0.6);
+}
+/* Native chevron — drawn as an inline SVG background image so the
+   color follows our token palette across themes. */
+.aa-day-picker .rdp-dropdown_root::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  background: rgb(var(--aa-text-dim));
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='black' d='M7 10l5 5 5-5z'/></svg>") center / contain no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='black' d='M7 10l5 5 5-5z'/></svg>") center / contain no-repeat;
+  pointer-events: none;
 }

@@ -39,6 +39,15 @@ const GPS_COLUMNS: Record<string, string> = {
   "Drill Start Time": "drill_start_time",
   "Drill End Time": "drill_end_time",
   "Total Distance": "total_distance",
+  // The W&M dashboard CSV uses "Total Yards" (already in yards); the
+  // raw StatSports export uses "Total Distance" (meters). Both map to
+  // the same `total_distance` column. NOTE: this means stored values
+  // can be in either unit depending on which CSV ingested them — the
+  // unit-consistency cleanup is tracked in CLAUDE.md's TODO ("Change
+  // distance from m to yards"). For Brian's primary file (yards), the
+  // values display correctly; for older raw exports a downstream m→yd
+  // conversion at render time is still required.
+  "Total Yards": "total_distance",
   "Distance Zone 1 (Relative)": "distance_zone_1",
   "Distance Zone 2 (Relative)": "distance_zone_2",
   "Distance Zone 3 (Relative)": "distance_zone_3",
@@ -48,13 +57,23 @@ const GPS_COLUMNS: Record<string, string> = {
   "Distance Zone 4 - Zone 6 (Relative)": "distance_zone_4_6",
   "Max Speed": "max_speed",
   "% Max Speed": "pct_max_speed",
-  "High Speed Running (Relative)": "high_speed_running",
+  // Brian's report wants the *absolute* HSR distance (column 12 in the
+  // W&M dashboard CSV, header `HSR`), not the minute-normalized
+  // "High Speed Running (Relative)" value (column 15). The two columns
+  // both exist in the W&M export, but the SESSION_REPORT_METRICS entry
+  // uses `aggregation: "sum"` and a distance unit, which only makes
+  // sense for the absolute. Mapping the absolute here.
+  "HSR": "high_speed_running",
   "HSR Per Minute (Relative)": "hsr_per_minute",
   "Distance Per Min": "distance_per_min",
   "Speed Intensity": "speed_intensity",
   "Accelerations (Relative)": "accelerations",
   "Accelerations Zone 3 - Zone 6 (Relative)": "accelerations_zone_3_6",
   "Accelerations Zone 4 - Zone 6 (Relative)": "accelerations_zone_4_6",
+  // W&M dashboard CSV uses the abbreviated "Accels" header for the
+  // Zone 4-6 accel count (the same metric coaches care about for
+  // session reports). Aliased to the existing zone_4_6 column.
+  "Accels": "accelerations_zone_4_6",
   "Accelerations Zone 5 - Zone 6 (Relative)": "accelerations_zone_5_6",
   "Player Max Accel": "player_max_accel",
   "Max Acceleration": "max_acceleration",
@@ -62,16 +81,24 @@ const GPS_COLUMNS: Record<string, string> = {
   "Decelerations (Relative)": "decelerations",
   "Decelerations Zone 3 - Zone 6 (Relative)": "decelerations_zone_3_6",
   "Decelerations Zone 4 - Zone 6 (Relative)": "decelerations_zone_4_6",
+  // Abbreviated W&M alias — same Zone 4-6 decel count.
+  "Decels": "decelerations_zone_4_6",
   "Decelerations Zone 5 - Zone 6 (Relative)": "decelerations_zone_5_6",
   "Player Max Decel": "player_max_decel",
   "Max Deceleration": "max_deceleration",
   "Decelerations Per Min (Relative)": "decelerations_per_min",
   "HML Distance": "hml_distance",
+  // W&M dashboard CSV abbreviates "HML Distance" → "HMLD".
+  "HMLD": "hml_distance",
   "HML Efforts Total Distance": "hml_efforts_total_distance",
   "HML Efforts": "hml_efforts",
   "HMLD Per Minute": "hmld_per_minute",
+  // W&M dashboard CSV uses "HMLD/Min" (slash form).
+  "HMLD/Min": "hmld_per_minute",
   "Fatigue Index": "fatigue_index",
   "Dynamic Stress Load": "dynamic_stress_load",
+  // W&M dashboard CSV abbreviates to "DSL".
+  "DSL": "dynamic_stress_load",
   "Dynamic Stress Load Zone 4 - Zone 6": "dynamic_stress_load_zone_4_6",
   "Dynamic Stress Load Zone 5 - Zone 6": "dynamic_stress_load_zone_5_6",
   "Total Loading": "total_loading",
@@ -125,6 +152,10 @@ const JUMP_COLUMNS: Record<string, string> = {
   "Eccentric Peak Velocity [m/s]": "eccentric_peak_velocity",
   "Eccentric Duration [ms] ": "eccentric_duration_ms",
   "Eccentric Duration [ms]": "eccentric_duration_ms",
+  "Contraction Time [ms] ": "contraction_time_ms",
+  "Contraction Time [ms]": "contraction_time_ms",
+  "Contraction Time (ms) ": "contraction_time_ms",
+  "Contraction Time (ms)": "contraction_time_ms",
   "Countermovement Depth [cm] ": "countermovement_depth_cm",
   "Countermovement Depth [cm]": "countermovement_depth_cm",
   "Concentric Mean Force % (Asym) (%)": "concentric_mean_force_asym",

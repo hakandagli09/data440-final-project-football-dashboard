@@ -5,6 +5,10 @@ const STATUS_STYLES: Record<PlayerStatus, { label: string; className: string }> 
     label: "CLEARED",
     className: "bg-aa-success/15 text-aa-success border-aa-success/25",
   },
+  modified_load: {
+    label: "MODIFIED LOAD",
+    className: "bg-aa-accent/15 text-aa-accent border-aa-accent/25",
+  },
   injured: {
     label: "INJURED",
     className: "bg-aa-danger/15 text-aa-danger border-aa-danger/25",

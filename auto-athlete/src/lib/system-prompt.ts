@@ -71,7 +71,7 @@ Flags:
 - EWMA flag: latest EWMA more than 1 SD below baseline.
 - Output flag: z-score below -1.5.
 - Asymmetry flag: imbalance above 10%.
-- injured and rehab players are excluded from standard flagging.
+- modified_load, injured, rehab, and return_to_play players are excluded from standard flagging.
 - return_to_play uses RTP baseline logic.
 
 UI markers:

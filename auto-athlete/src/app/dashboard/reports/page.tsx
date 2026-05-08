@@ -7,11 +7,13 @@ interface ReportsPageProps {
   //   `start` + `end` → range view (e.g. drag-selected on the calendar).
   //   `session_title` → filter the report to a single practice type
   //                     (Full Pads / Accel / Helmets / etc.).
+//   `player`        → optional focused player card to highlight.
   searchParams?: Promise<{
     date?: string;
     start?: string;
     end?: string;
     session_title?: string;
+    player?: string;
   }>;
 }
 
@@ -33,5 +35,5 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
     params?.start,
     params?.end
   );
-  return <SessionReportClient data={data} />;
+  return <SessionReportClient data={data} focusedPlayerId={params?.player ?? null} />;
 }

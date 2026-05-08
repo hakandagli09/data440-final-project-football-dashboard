@@ -75,7 +75,7 @@ export default function KPICard({
 }: KPICardProps): JSX.Element {
   return (
     <div
-      className="card-glow group relative bg-aa-surface border border-aa-border rounded-xl p-5 hover:border-aa-border-bright transition-all duration-300 opacity-0 animate-slide-up"
+      className="card-glow group relative bg-aa-surface border border-aa-border rounded-xl p-5 hover:border-aa-border-bright transition-all duration-300 opacity-0 animate-slide-up print:break-inside-avoid print:opacity-100 print:animate-none"
       style={{ animationDelay: `${delay}ms` }}
     >
       {/* Top accent line — uses `card-glow` class from globals.css which adds

@@ -190,6 +190,7 @@ export default function PlayersClient({ players, reportData }: PlayersClientProp
             >
               <option value="all">All</option>
               <option value="cleared">Cleared</option>
+              <option value="modified_load">Modified Load</option>
               <option value="rehab">Rehab</option>
               <option value="injured">Injured</option>
               <option value="return_to_play">Return To Play</option>
@@ -282,7 +283,10 @@ export default function PlayersClient({ players, reportData }: PlayersClientProp
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  <Link href={`/dashboard/players/${player.id}`} className="text-sm font-semibold text-aa-text hover:text-aa-accent transition-colors">
+                  <Link
+                    href={`/dashboard/players/${player.id}?date=${reportData.currentDate}`}
+                    className="text-sm font-semibold text-aa-text hover:text-aa-accent transition-colors"
+                  >
                     {player.name}
                   </Link>
                 </td>

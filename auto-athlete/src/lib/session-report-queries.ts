@@ -4,18 +4,42 @@ import { getSide, type PositionSide } from "@/lib/position-groups";
 import type { PlayerStatus } from "@/lib/player-queries";
 import { supabaseServer as supabase } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { getNormalizedHsr } from "@/lib/flagging";
 
 /**
  * Session Report data — coach-facing, one card per player.
  *
- * Mirrors Brian's Excel workflow (screenshot reference):
- *   METRIC | Daily | Running Tot. | Weekly Avg | %
- *   where % = Running Total / Weekly Avg * 100.
+ * Layout mirrors Brian's Excel workflow (screenshot reference):
+ *   METRIC | Daily | 7D Avg / Total | <Title> Avg | %
  *
- * Weekly Avg is each player's own rolling 4-week baseline for that metric
- * so the percentage reflects "am I on pace vs. my own normal week?"
- * (Brian's sheet uses a target number; a rolling-4wk baseline is the
- *  statistical equivalent and auto-updates as the season progresses.)
+ * The `%` column compares each metric to a **year-to-date practice-
+ * type baseline**: the player's mean across same-`session_title` days
+ * within the calendar year of the selected date. Today's practice
+ * type drives which average is shown — Helmets day → Helmets avg,
+ * Full Pads day → Full Pads avg, Game day → Game avg, etc.
+ *
+ * Year scoping rules:
+ *  - The baseline window is the full calendar year (Jan 1 → Dec 31)
+ *    of the selected date. Each year resets on Jan 1, so a January
+ *    practice day starts the new year with an empty baseline that
+ *    fills in as data accumulates.
+ *  - Game-type baselines have one extra rule: they are suppressed
+ *    when the selected date is in Jan–July (out of the competitive
+ *    Aug–Dec season). Game avg "shouldn't display before the season
+ *    starts in August"; other practice-type avgs (Helmets, Full Pads,
+ *    Practice, etc.) display year-round so spring training has a
+ *    benchmark to compare against.
+ *  - The selected day (or selected range, in range mode) is excluded
+ *    from its own baseline so the % reads as "today vs the rest of
+ *    the year's same-title days" rather than vs a self-inflated mean.
+ *
+ * Why per-day-then-mean instead of a flat row mean: a single day can
+ * have multiple drill rows (Pre-Game + Q1..Q4 on a Game, individual
+ * drills on a Practice). Aggregating each date into one daily value
+ * first using the metric's kind (sum / max / avg), then averaging
+ * across days, keeps the baseline at "one game/practice's worth" —
+ * flat-averaging the raw rows would let a multi-drill day pull the
+ * mean off whenever the export shape varies.
  */
 
 /** Unique key for each metric row in the report card. */
@@ -80,10 +104,38 @@ export interface SessionReportCell {
   decimals: number;
   /** Raw metric values — imperial conversion happens at display time. */
   daily: number | null;
+  /**
+   * Secondary value rendered in the "7D Avg" / "Total" column:
+   *  - Single-day mode: rolling 7-day mean (per-day rollup, then mean
+   *    across days) inclusive of currentDate. Matches Brian's
+   *    AVERAGEIFS(date<=Q4 AND date>=Q4-7) Excel formula.
+   *  - Range mode:      aggregate across the picked window, using the
+   *    metric's aggregation kind (sum/max/mean).
+   */
   runningTotal: number | null;
-  weeklyAverage: number | null;
-  /** Running Total / Weekly Average * 100. Null when baseline is 0 or suppressed. */
-  pctOfWeeklyAvg: number | null;
+  /**
+   * Comparison baseline for the % column — the player's mean across
+   * same-practice-type days within the selected date's calendar year
+   * (excluding the selected day/range so today doesn't average against
+   * itself). The matching practice type comes from the card-level
+   * `baselineTitle`. Null when:
+   *   - No practice type could be resolved for the day (e.g. the player
+   *     has no rows on the selected date and no chip filter),
+   *   - The resolved title is "Game" but the selected date is in
+   *     Jan–July (game avg is suppressed before the season starts),
+   *   - Or the player has no rows of the matching title in this year.
+   */
+  baselineMean: number | null;
+  /**
+   * Percent of the player's same-practice-type season baseline:
+   *   - Single-day mode: daily ÷ baselineMean × 100
+   *   - Range mode: per-day mean across the picked window ÷ baselineMean
+   *     × 100 (range numerator is normalized to a per-day basis so it
+   *     stays comparable to the per-day baseline regardless of how
+   *     many days the window spans).
+   * Null when the baseline is 0/missing or the metric is suppressed.
+   */
+  pctOfBaseline: number | null;
   suppressPercent: boolean;
 }
 
@@ -103,6 +155,16 @@ export interface SessionReportPlayerCard {
   cells: SessionReportCell[];
   /** Last 7 days of total distance for the mini chart. */
   distanceSparkline: SparklinePoint[];
+  /**
+   * Practice type that drives the baseline column header for this
+   * player — "Helmets", "Full Pads", "Game", etc. Renders as
+   * "{baselineTitle} Avg". Null when no practice type could be
+   * resolved (no rows on the selected day with no chip filter set), or
+   * when the resolved title would have been "Game" but the selected
+   * date is in Jan–July (game avg is suppressed off-season). The
+   * column then renders a generic "Avg" header with empty cells.
+   */
+  baselineTitle: string | null;
 }
 
 /**
@@ -145,7 +207,9 @@ type GpsRow = {
   player_id: string;
   session_date: string;
   session_title: string | null;
-  [key: string]: number | string | null;
+  high_speed_running?: number | null;
+  distance_zone_4_6?: number | null;
+  [key: string]: number | string | null | undefined;
 };
 
 /** Utility: coerce DB value to number or null (StatSports sometimes returns NaN). */
@@ -153,6 +217,11 @@ function num(v: unknown): number | null {
   if (v == null) return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+function metricNum(row: GpsRow, column: string): number | null {
+  if (column === "high_speed_running") return getNormalizedHsr(row);
+  return num(row[column]);
 }
 
 /**
@@ -169,41 +238,115 @@ function aggregate(values: Array<number | null>, kind: AggregationKind): number 
 }
 
 /**
- * Compute a player's rolling 4-week baseline for a given metric. Uses the
- * four ISO weeks prior to the selected week and applies the same
- * aggregation kind that the daily/running-total views use so the numbers
- * are comparable. Returns null when the player has no prior history.
+ * Calendar-year window for an ISO date — the baseline scope used by
+ * the % column. Each calendar year is one "season" for baselining
+ * purposes: a January practice day starts a new year with an empty
+ * baseline that fills in over the next 11 months, then resets again
+ * on Jan 1.
+ *
+ * Game-day baselines have one extra rule applied at the call site
+ * (not here) — they are suppressed when the selected date is in
+ * Jan–July, since coach Sutton wants the game avg to disappear during
+ * the off-season. This helper always returns the full calendar year so
+ * that non-game practice averages (Helmets, Full Pads, etc.) remain
+ * visible year-round; the suppression is just a render-time gate.
+ *
+ * Returns null only on malformed input (defensive — `currentDate` is
+ * already validated to be a real session date upstream).
  */
-function computeWeeklyBaseline(
+function getSeasonWindow(date: string): { start: string; end: string } | null {
+  if (!date || date.length < 4) return null;
+  // Slice instead of new Date(...) to avoid TZ surprises on YYYY-MM-DD strings.
+  const year = parseInt(date.slice(0, 4), 10);
+  if (!Number.isFinite(year)) return null;
+  return { start: `${year}-01-01`, end: `${year}-12-31` };
+}
+
+/**
+ * Returns true when the selected date falls inside the competitive
+ * football season (Aug–Dec). Used to suppress the Game-day baseline
+ * during the off-season per coach Sutton: the game avg should not
+ * display before the season starts in August.
+ */
+function isInGameSeasonMonth(date: string): boolean {
+  if (!date || date.length < 7) return false;
+  const month = parseInt(date.slice(5, 7), 10);
+  return Number.isFinite(month) && month >= 8 && month <= 12;
+}
+
+/**
+ * Compute a season-scoped baseline for a single (player, practice type,
+ * metric): filter to rows where the player's `session_title` matches
+ * `title`, drop any date that falls inside the [excludeStart, excludeEnd]
+ * inclusive window, bucket by date, aggregate each day with the metric's
+ * kind (sum / max / avg), then take the mean across those per-day values.
+ *
+ * Excluding the selected window keeps today's value (or the picked range)
+ * out of its own denominator, so the % reads as "today vs the rest of
+ * the season's same-title days" instead of self-inflating toward 100%.
+ *
+ * Bucketing by date matters for sum metrics: a single Game day with
+ * Pre-Game + Q1..Q4 drill rows must count as ONE game's worth of
+ * volume, not five. Flat-averaging the raw rows would understate the
+ * baseline by a factor of (#drill rows per game).
+ *
+ * Caller is responsible for filtering `rows` to the season window —
+ * this helper does not re-check date bounds beyond the exclusion span.
+ */
+function computePracticeTypeBaseline(
   rows: GpsRow[],
   playerId: string,
+  title: string,
   column: string,
   kind: AggregationKind,
-  currentWeekStart: string
+  excludeStart: string,
+  excludeEnd: string
 ): number | null {
   const buckets = new Map<string, Array<number | null>>();
   for (const row of rows) {
     if (row.player_id !== playerId) continue;
-    if (row.session_date >= currentWeekStart) continue;
-    const weekStart = getWeekStart(row.session_date);
-    // Only include sessions from the last 4 complete weeks to keep the
-    // baseline responsive to recent training trends.
-    const weeksBack = Math.floor(
-      (new Date(`${currentWeekStart}T00:00:00Z`).getTime() - new Date(`${weekStart}T00:00:00Z`).getTime()) /
-        (1000 * 60 * 60 * 24 * 7)
-    );
-    if (weeksBack < 1 || weeksBack > 4) continue;
-    if (!buckets.has(weekStart)) buckets.set(weekStart, []);
-    buckets.get(weekStart)!.push(num(row[column]));
+    if ((row.session_title ?? "").trim() !== title) continue;
+    if (row.session_date >= excludeStart && row.session_date <= excludeEnd) continue;
+    if (!buckets.has(row.session_date)) buckets.set(row.session_date, []);
+    buckets.get(row.session_date)!.push(metricNum(row, column));
   }
 
-  const weekTotals: number[] = [];
+  const dailyValues: number[] = [];
   for (const values of Array.from(buckets.values())) {
     const agg = aggregate(values, kind);
-    if (agg != null) weekTotals.push(agg);
+    if (agg != null) dailyValues.push(agg);
   }
-  if (weekTotals.length === 0) return null;
-  return weekTotals.reduce((a, b) => a + b, 0) / weekTotals.length;
+  if (dailyValues.length === 0) return null;
+  return dailyValues.reduce((a, b) => a + b, 0) / dailyValues.length;
+}
+
+/**
+ * Compute a per-day mean across the supplied rows: bucket by date,
+ * aggregate each bucket using the metric's kind, then mean those
+ * per-day values. Used as the % numerator in range mode so a 7-day
+ * window (or any range) is normalized to a "per-day basis" before
+ * being compared against the per-game-day baseline. Without this
+ * normalization a multi-day sum metric (e.g. weekly distance) would
+ * blow up to 500 %+ even on routine weeks because we'd be comparing
+ * a week's total to a single game.
+ */
+function computePerDayMean(
+  rows: GpsRow[],
+  column: string,
+  kind: AggregationKind
+): number | null {
+  const buckets = new Map<string, Array<number | null>>();
+  for (const row of rows) {
+    if (!buckets.has(row.session_date)) buckets.set(row.session_date, []);
+    buckets.get(row.session_date)!.push(metricNum(row, column));
+  }
+  const dailyValues: number[] = [];
+  for (const values of Array.from(buckets.values())) {
+    const agg = aggregate(values, kind);
+    if (agg != null) dailyValues.push(agg);
+  }
+  if (dailyValues.length === 0) return null;
+  return dailyValues.reduce((a, b) => a + b, 0) / dailyValues.length;
 }
 
 /**
@@ -232,11 +375,18 @@ export async function getSessionReportData(
   // same table but would N-multiply totals if summed alongside aggregated
   // rows. Other consumers (group-queries, player-queries, etc.) are
   // intentionally not changed here — to be addressed in a later pass.
+  // We used to scope this to `drill_title = 'Entire Session'` because the
+  // StatSports raw export includes both per-drill rows AND a session
+  // rollup row. The W&M dashboard CSV breaks that assumption: many Game
+  // days are exported only as drill segments (Pre-Game, 1st Quarter,
+  // etc.) with NO Entire Session row, so filtering by that title made
+  // those Saturdays invisible in the calendar. We now accept any row,
+  // since this query just feeds the unique-dates and unique-titles
+  // sets — no aggregation, so duplicates per date are harmless.
   const dateRows = await fetchAllRows<{ session_date: string; session_title: string | null }>(() =>
     supabase
       .from("gps_sessions")
       .select("session_date, session_title")
-      .eq("drill_title", "Entire Session")
       .order("session_date", { ascending: false })
   );
 
@@ -366,44 +516,130 @@ export async function getSessionReportData(
   // Sparkline window (last 7 days ending on the report's "as of" date).
   const sparkStart = subtractDays(currentDate, 6);
 
-  const columnList = SESSION_REPORT_METRICS.map((m) => m.column).join(", ");
+  // Resolve the calendar-year window for the selected day. Drives the
+  // % baseline scope: the player's mean across same-title days within
+  // this window, excluding the selected day/range. Always returns a
+  // window — game-avg suppression for Jan–July is handled per-card
+  // when resolving baselineTitle, not here.
+  const seasonWindow = getSeasonWindow(currentDate);
+  // Cap the season fetch at endDate so the baseline never sees future
+  // sessions; the per-player computation also explicitly excludes
+  // [startDate, endDate] so the day(s) being scored stay out of their
+  // own denominator.
+  const seasonFetchEnd =
+    seasonWindow != null && seasonWindow.end < endDate ? seasonWindow.end : endDate;
+  // Whether the selected month is in the competitive Aug–Dec window —
+  // gates Game-type baselines so off-season cards don't show stale
+  // game numbers. Non-game practice baselines are unaffected.
+  const inGameSeason = isInGameSeasonMonth(currentDate);
+
+  const metricColumns = new Set(SESSION_REPORT_METRICS.map((m) => m.column));
+  metricColumns.add("distance_zone_4_6");
+  const columnList = Array.from(metricColumns).join(", ");
 
   const [
     { data: playersRows },
     { data: injuriesRows },
     historyRows,
+    seasonRows,
   ] = await Promise.all([
     supabase.from("players").select("id, name, position"),
     supabase
       .from("injuries")
       .select("player_id, status, expected_return, updated_at")
       .order("updated_at", { ascending: false }),
-    // Filter to aggregated rows only (drill_title = "Entire Session") —
-    // see the comment on `dateRows` above for the rationale. Pagination
-    // is still required because a populated roster produces ~30+
-    // aggregated rows per session, easily crossing PostgREST's 1000-row
-    // cap over a 4-week window.
+    // We pull `drill_title` too because the W&M dashboard CSV's Game
+    // days frequently lack an "Entire Session" rollup row — only drill
+    // segments. Per-(player, date) dedupe below picks the summary row
+    // when present, otherwise falls back to the drill rows. This keeps
+    // StatSports raw exports (which always include Entire Session)
+    // unaffected while making W&M Game days visible.
     fetchAllRows<Record<string, unknown>>(() =>
       supabase
         .from("gps_sessions")
-        .select(`player_id, session_date, session_title, ${columnList}`)
-        .eq("drill_title", "Entire Session")
+        .select(`player_id, session_date, session_title, drill_title, ${columnList}`)
         .gte("session_date", baselineWindowStart)
         .lte("session_date", currentDate)
     ),
+    // Year-scoped fetch for the % baseline. Pulls every session in
+    // the calendar year of the selected date (capped at the end of
+    // the active window so we never see future data) across all
+    // session_titles, so the per-player loop below can derive
+    // whichever practice-type baseline matches today's session
+    // (Helmets / Full Pads / Game / etc.). When `seasonWindow` is null
+    // (malformed date — defensive) we skip the round trip entirely.
+    seasonWindow
+      ? fetchAllRows<Record<string, unknown>>(() =>
+          supabase
+            .from("gps_sessions")
+            .select(`player_id, session_date, session_title, drill_title, ${columnList}`)
+            .gte("session_date", seasonWindow.start)
+            .lte("session_date", seasonFetchEnd)
+        )
+      : Promise.resolve([] as Record<string, unknown>[]),
   ]);
 
   // Supabase's typed client can't validate dynamically interpolated
   // column lists, so cast through `unknown` to keep the runtime shape
   // while shedding the compile-time ParserError type.
-  const historyAll = (historyRows as unknown) as GpsRow[];
+  const historyRaw = (historyRows as unknown) as Array<
+    GpsRow & { drill_title: string | null }
+  >;
+
+  // Per-(player, date) dedupe: when an "Entire Session" summary row
+  // exists for a day, use only that row (it's the StatSports rollup
+  // and would double-count if summed alongside the drill rows that
+  // make it up). When no summary exists — typical of W&M Game days —
+  // keep all drill rows so the metric `aggregate` calls (sum / max /
+  // mean per metric) compute the day total from the parts.
+  const historyByKey = new Map<string, typeof historyRaw>();
+  for (const row of historyRaw) {
+    const key = `${row.player_id}|${row.session_date}`;
+    const arr = historyByKey.get(key);
+    if (arr) arr.push(row);
+    else historyByKey.set(key, [row]);
+  }
+  const historyAll: GpsRow[] = [];
+  for (const rows of Array.from(historyByKey.values())) {
+    const summaryRows = rows.filter(
+      (r) => (r.drill_title ?? "").trim() === "Entire Session"
+    );
+    historyAll.push(...(summaryRows.length > 0 ? summaryRows : rows));
+  }
   // Apply the session-title filter once up front — every downstream
-  // aggregation (daily, running total, 4-week baseline, sparkline) then
-  // automatically scopes to the selected session type.
+  // aggregation (daily, running total, sparkline) then automatically
+  // scopes to the selected session type. The season baseline below is
+  // intentionally NOT scoped by this filter; the % column matches each
+  // player's *day-of* practice type (or, if a chip filter is active,
+  // that filter's title), regardless of what's being shown above.
   const history = currentSessionTitle
     ? historyAll.filter((r) => normalizedTitle(r.session_title) === currentSessionTitle)
     : historyAll;
   const players = (playersRows ?? []) as Array<{ id: string; name: string; position: string | null }>;
+
+  // Same per-(player, date) dedupe applied to the season-row pool used
+  // by the baseline. Without this, a Game day exported as 5 drill
+  // segments (Pre-Game + Q1..Q4) would be treated as 5 separate
+  // "days" by `computePracticeTypeBaseline`, sum metrics would
+  // aggregate per segment, and the per-day mean would be off by the
+  // drill-row count. Preferring the "Entire Session" rollup when
+  // present keeps StatSports raw exports tight; falling back to drill
+  // rows keeps the W&M dashboard CSV days countable.
+  const seasonRaw = (seasonRows as unknown) as Array<GpsRow & { drill_title: string | null }>;
+  const seasonByKey = new Map<string, typeof seasonRaw>();
+  for (const row of seasonRaw) {
+    const key = `${row.player_id}|${row.session_date}`;
+    const arr = seasonByKey.get(key);
+    if (arr) arr.push(row);
+    else seasonByKey.set(key, [row]);
+  }
+  const seasonHistory: GpsRow[] = [];
+  for (const rows of Array.from(seasonByKey.values())) {
+    const summaryRows = rows.filter(
+      (r) => (r.drill_title ?? "").trim() === "Entire Session"
+    );
+    seasonHistory.push(...(summaryRows.length > 0 ? summaryRows : rows));
+  }
 
   // Latest injury status per player (first occurrence wins because we
   // ordered by updated_at DESC above).
@@ -438,43 +674,126 @@ export async function getSessionReportData(
     // render empty cards and clutter the grid.
     if (playerHistory.length === 0) continue;
 
-    // Single-day mode keeps the original semantics (Daily = that day,
-    // Running = week-to-date through that day). Range mode treats the
-    // selected window as the rollup unit — Daily is null (the column
-    // hides on the client) and Running becomes the aggregate across
-    // the entire range. Weekly Avg stays a player's typical week in
-    // both modes so % reads as "this period vs. a normal week".
+    // Single-day mode rows: today's value (Daily) plus the rolling
+    // 7-day window (computed below in the cells map). Range mode
+    // collapses to one rollup across the picked window.
     const todayRows = playerHistory.filter((r) => r.session_date === currentDate);
-    const weekRows = playerHistory.filter(
-      (r) => r.session_date >= weekStart && r.session_date <= currentDate
-    );
     const rangeRows = playerHistory.filter(
       (r) => r.session_date >= startDate && r.session_date <= endDate
     );
 
+    // 7-day rolling window for single-day mode, matching Brian's
+    // Excel formula:
+    //   =AVERAGEIFS(metric, date<=Q4, date>=Q4-7, player=$E$4)
+    // i.e. an inclusive [currentDate − 7, currentDate] = 8-day window
+    // with no session-title or drill-title filter beyond whatever
+    // chip filter the user has active (which propagates here via
+    // `playerHistory`). Computed per metric below as the *mean of
+    // daily aggregates* — we roll up multiple drill rows per day
+    // first, then mean across days, so a Game-day with 3 drill rows
+    // doesn't outweigh a Helmets day with 1.
+    const sevenDayWindowStart: string = subtractDays(currentDate, 7);
+    const sevenDayRows: GpsRow[] = playerHistory.filter(
+      (r) => r.session_date >= sevenDayWindowStart && r.session_date <= currentDate
+    );
+
+    // Resolve the practice type that drives this player's % baseline:
+    //   1. URL chip filter wins when set ("show me Helmets days only" →
+    //      compare to year's Helmets avg, even if today happens to be
+    //      a Full Pads day).
+    //   2. Else, single-day mode uses the player's own session_title
+    //      for the selected date — Helmets day → Helmets avg, Game day
+    //      → Game avg, etc.
+    //   3. Else (range mode without a filter), default to "Game" as a
+    //      stable cross-week benchmark since the range can mix titles.
+    // Game-type baselines are then suppressed off-season (Jan–July)
+    // per coach Sutton: the game avg shouldn't display before the
+    // season starts in August. Non-game practice baselines (Helmets,
+    // Full Pads, etc.) display year-round so spring training has a
+    // benchmark to compare against.
+    const playerTitleToday: string | null =
+      mode === "single" && todayRows.length > 0
+        ? normalizedTitle(
+            todayRows.find((r) => r.session_title)?.session_title ?? null
+          )
+        : null;
+    const resolvedTitle: string | null = seasonWindow
+      ? currentSessionTitle ??
+        playerTitleToday ??
+        (mode === "range" ? "Game" : null)
+      : null;
+    const baselineTitle: string | null =
+      resolvedTitle === "Game" && !inGameSeason ? null : resolvedTitle;
+
     const cells: SessionReportCell[] = SESSION_REPORT_METRICS.map((metric) => {
       const daily =
         mode === "single"
-          ? aggregate(todayRows.map((r) => num(r[metric.column])), metric.aggregation)
+          ? aggregate(todayRows.map((r) => metricNum(r, metric.column)), metric.aggregation)
           : null;
-      const runningTotal =
-        mode === "single"
-          ? aggregate(weekRows.map((r) => num(r[metric.column])), metric.aggregation)
-          : aggregate(rangeRows.map((r) => num(r[metric.column])), metric.aggregation);
-      // Baseline is always anchored to the start of the report window
-      // so the comparison week is always strictly *prior* to the data
-      // shown in the Daily / Running columns.
-      const weeklyAverage = computeWeeklyBaseline(
-        playerHistory,
-        player.id,
-        metric.column,
-        metric.aggregation,
-        rangeWeekStart
-      );
 
-      const pctOfWeeklyAvg =
-        !metric.suppressPercent && runningTotal != null && weeklyAverage != null && weeklyAverage !== 0
-          ? (runningTotal / weeklyAverage) * 100
+      // Single-day "Running" column → 7-day rolling MEAN per Brian's
+      // formula. Range mode keeps the rollup-across-window semantics
+      // (header relabels to "Total" in the renderer).
+      let runningTotal: number | null;
+      if (mode === "single") {
+        const dayBuckets = new Map<string, Array<number | null>>();
+        for (const row of sevenDayRows) {
+          if (!dayBuckets.has(row.session_date)) {
+            dayBuckets.set(row.session_date, []);
+          }
+          dayBuckets.get(row.session_date)!.push(metricNum(row, metric.column));
+        }
+        const dailyValues: number[] = [];
+        for (const vals of Array.from(dayBuckets.values())) {
+          const agg = aggregate(vals, metric.aggregation);
+          if (agg != null) dailyValues.push(agg);
+        }
+        runningTotal = dailyValues.length === 0
+          ? null
+          : dailyValues.reduce((a, b) => a + b, 0) / dailyValues.length;
+      } else {
+        runningTotal = aggregate(
+          rangeRows.map((r) => metricNum(r, metric.column)),
+          metric.aggregation
+        );
+      }
+      // Baseline = the player's mean across same-title days within the
+      // current season window, excluding the selected day/range so
+      // today doesn't average against itself. Returns null when no
+      // baselineTitle could be resolved (off-season or no day rows) or
+      // the player has no rows of that title in this season — the %
+      // column then renders as "—".
+      const baselineMean = baselineTitle
+        ? computePracticeTypeBaseline(
+            seasonHistory,
+            player.id,
+            baselineTitle,
+            metric.column,
+            metric.aggregation,
+            startDate,
+            endDate
+          )
+        : null;
+
+      // % numerator:
+      //   - single-day → today's value (one day's aggregate, directly
+      //     comparable to the per-day baseline).
+      //   - range      → per-day mean across the picked window. We
+      //     can't reuse `runningTotal` for sum metrics in range mode
+      //     because it sums multiple days, which would balloon the
+      //     ratio against a per-day denominator. Computing a per-day
+      //     mean keeps the comparison apples-to-apples for every
+      //     aggregation kind.
+      const pctNumerator =
+        mode === "single"
+          ? daily
+          : computePerDayMean(rangeRows, metric.column, metric.aggregation);
+      const pctOfBaseline =
+        !metric.suppressPercent &&
+        pctNumerator != null &&
+        baselineMean != null &&
+        baselineMean !== 0
+          ? (pctNumerator / baselineMean) * 100
           : null;
 
       return {
@@ -484,8 +803,8 @@ export async function getSessionReportData(
         decimals: metric.decimals,
         daily,
         runningTotal,
-        weeklyAverage,
-        pctOfWeeklyAvg,
+        baselineMean,
+        pctOfBaseline,
         suppressPercent: metric.suppressPercent ?? false,
       };
     });
@@ -515,14 +834,14 @@ export async function getSessionReportData(
       expectedReturn: statusEntry?.expectedReturn ?? null,
       cells,
       distanceSparkline,
+      baselineTitle,
     });
   }
 
-  // Split into the three report sections. Injured / rehab players are
-  // pulled out regardless of side so they don't skew the coach's read of
-  // who trained hard today.
-  const injuredRehab = cards.filter((c) => c.status === "injured" || c.status === "rehab");
-  const activeCards = cards.filter((c) => c.status !== "injured" && c.status !== "rehab");
+  // Managed players are pulled out regardless of side so intentionally
+  // reduced loads don't skew the coach's read of who trained hard today.
+  const injuredRehab = cards.filter((c) => c.status !== "cleared");
+  const activeCards = cards.filter((c) => c.status === "cleared");
 
   // Sort alphabetically so the grid is stable between loads.
   activeCards.sort((a, b) => a.playerName.localeCompare(b.playerName));

@@ -34,12 +34,19 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     <ChatProvider>
       <div className="min-h-screen bg-aa-bg noise-overlay">
         <Sidebar />
-        {/* ml-[220px] offsets content past the fixed sidebar width */}
-        <div className="ml-[220px] relative z-10">
+        {/* ml-[220px] offsets content past the fixed sidebar width.
+            On print the sidebar is hidden by the global @media print
+            rule, so we collapse the offset (`print:ml-0`) and zero
+            the main padding so the report fills the page. */}
+        <div className="ml-[220px] relative z-10 print:ml-0">
           <TopBar />
-          <main className="p-6">{children}</main>
+          <main className="p-6 print:p-0">{children}</main>
         </div>
-        <ChatPanel />
+        {/* ChatPanel is `fixed` and not part of any semantic chrome
+            element, so it needs an explicit `print:hidden` wrapper. */}
+        <div className="print:hidden">
+          <ChatPanel />
+        </div>
       </div>
     </ChatProvider>
   );

@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useChat } from "@/lib/chat-context";
+import { useTheme } from "@/lib/theme-context";
 
 interface PlayerSearchItem {
   id: string;
@@ -25,6 +26,11 @@ interface PlayerSearchItem {
 export default function TopBar(): JSX.Element {
   const router = useRouter();
   const { toggleChat } = useChat();
+  const { theme, toggleTheme } = useTheme();
+  const themeIsDark: boolean = theme === "dark";
+  const themeToggleLabel: string = themeIsDark
+    ? "Switch to light theme"
+    : "Switch to dark theme";
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [players, setPlayers] = useState<PlayerSearchItem[]>([]);
@@ -167,6 +173,29 @@ export default function TopBar(): JSX.Element {
               Hardcoded as visible; in production this would be conditionally
               rendered based on notification state from the backend. */}
           <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-aa-warm" />
+        </button>
+
+        {/* Theme toggle — flips between dark and light. Hidden in print
+            since printed output forces the light palette via @media print. */}
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={themeToggleLabel}
+          title={themeToggleLabel}
+          className="relative p-2 rounded-lg border border-aa-border bg-aa-bg/50 text-aa-text-dim hover:text-aa-text hover:border-aa-border-bright transition-all duration-150 ease-out active:scale-[0.97] print:hidden"
+        >
+          {themeIsDark ? (
+            // Sun = action (clicking switches to light).
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <circle cx="12" cy="12" r="4" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+            </svg>
+          ) : (
+            // Moon = action (clicking switches back to dark).
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          )}
         </button>
 
         <button

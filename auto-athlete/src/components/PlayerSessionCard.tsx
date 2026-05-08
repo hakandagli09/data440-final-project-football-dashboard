@@ -84,21 +84,51 @@ function Sparkline({ points }: { points: SparklinePoint[] }) {
 interface PlayerSessionCardProps {
   card: SessionReportPlayerCard;
   /**
-   * Single-day mode shows Daily / Running / Week Avg / %. Range mode
-   * collapses to Total / Week Avg / % because the Daily column has no
-   * meaning across a multi-day window.
+   * Layout differs by mode:
+   *  - single-day → Daily / 7D Avg / <Title> Avg / %
+   *      Daily         = today's value (sum/max/mean of today's drill rows)
+   *      7D Avg        = mean of daily aggregates over [today − 7, today]
+   *      <Title> Avg   = year-to-date mean of the player's same-title
+   *                      days within the selected date's calendar year
+   *                      (Helmets / Full Pads / Game / etc.)
+   *      %             = Daily ÷ <Title> Avg × 100
+   *  - range     → Total / <Title> Avg / %
+   *      Total         = aggregate across the picked window
+   *      <Title> Avg   = year-to-date same-title mean (excluding the
+   *                      selected window). Defaults to "Game" when no
+   *                      session-title chip is active, since a range
+   *                      can mix titles.
+   *      %             = (per-day mean across the range) ÷ <Title> Avg × 100
+   *
+   *  Game-type avg/% are suppressed (rendered as "—") when the
+   *  selected date is in Jan–July — coach Sutton's rule that game
+   *  averages should not display before the season starts in August.
+   *  Non-game practice avgs (Helmets, Full Pads, etc.) display
+   *  year-round so spring training has a benchmark to compare against.
    */
   mode: ReportMode;
+  /** Date carried into the player profile when a report card is opened. */
+  reportDate: string;
+  /** Highlight when the user arrived from a flagged player card. */
+  isFocused?: boolean;
 }
 
 /**
- * Single player's Session Report card — mirrors the layout in Brian's
- * Excel spreadsheet (Daily / Running Total / Weekly Avg / %) so coaches
- * can read it with zero retraining.
+ * Single player's Session Report card. The % column is the "% of
+ * practice-type" view: each row compares today's value to the player's
+ * own year-to-date mean for the *same* practice type. Helmets day →
+ * Helmets avg, Full Pads day → Full Pads avg, Game day → Game avg.
+ * Game-day baselines are suppressed in Jan–July (off-season).
  */
-export default function PlayerSessionCard({ card, mode }: PlayerSessionCardProps) {
+export default function PlayerSessionCard({
+  card,
+  mode,
+  reportDate,
+  isFocused = false,
+}: PlayerSessionCardProps) {
   const showStatus = card.status !== "cleared";
   const isRange = mode === "range";
+  const profileHref = `/dashboard/players/${card.playerId}?date=${reportDate}`;
 
   // Latest-day yardage drives the sparkline summary label.
   // Sparkline values are already in yards (DB stores imperial directly).
@@ -114,11 +144,15 @@ export default function PlayerSessionCard({ card, mode }: PlayerSessionCardProps
     (isRange ? maxSpeedCell?.runningTotal : maxSpeedCell?.daily) ?? null;
 
   return (
-    <div className="rounded-xl border border-aa-border bg-aa-surface overflow-hidden print:break-inside-avoid print:border-gray-400">
+    <div
+      className={`rounded-xl border bg-aa-surface overflow-hidden print:break-inside-avoid print:border-gray-400 ${
+        isFocused ? "border-aa-accent shadow-[0_0_0_1px_rgb(var(--aa-accent)/0.35)]" : "border-aa-border"
+      }`}
+    >
       <div className="flex items-start justify-between px-4 py-3 border-b border-aa-border bg-aa-elevated">
         <div className="min-w-0">
           <Link
-            href={`/dashboard/players/${card.playerId}`}
+            href={profileHref}
             className="font-display text-lg tracking-[0.04em] text-aa-text hover:text-aa-accent transition-colors truncate block"
           >
             {card.playerName}
@@ -156,12 +190,22 @@ export default function PlayerSessionCard({ card, mode }: PlayerSessionCardProps
             {!isRange && (
               <th className="text-right py-1.5 px-2 font-medium">Daily</th>
             )}
-            {/* Header relabels in range mode so coaches read it as the
-                rollup across the picked window, not "week-to-date". */}
+            {/* Single-day mode shows a rolling 7-day mean ("7D Avg"),
+                matching the formula Brian uses in his spreadsheet:
+                AVERAGEIFS(metric, date<=today AND date>=today-7).
+                Range mode collapses to the rollup across the picked
+                window, displayed as "Total". */}
             <th className="text-right py-1.5 px-2 font-medium">
-              {isRange ? "Total" : "Running"}
+              {isRange ? "Total" : "7D Avg"}
             </th>
-            <th className="text-right py-1.5 px-2 font-medium">Week Avg</th>
+            {/* Baseline column header tracks the practice type that
+                drives this card's % — Helmets day shows "Helmets Avg",
+                Game day shows "Game Avg", etc. Off-season cards have
+                no baselineTitle, so we fall back to a generic "Avg"
+                label and the cells render as "—" downstream. */}
+            <th className="text-right py-1.5 px-2 font-medium">
+              {card.baselineTitle ? `${card.baselineTitle} Avg` : "Avg"}
+            </th>
             <th className="text-right py-1.5 px-3 font-medium">%</th>
           </tr>
         </thead>
@@ -181,18 +225,18 @@ export default function PlayerSessionCard({ card, mode }: PlayerSessionCardProps
                 {formatMetricValue(cell.runningTotal, cell.unit, cell.decimals)}
               </td>
               <td className="text-right py-1.5 px-2 text-aa-text-dim tabular-nums">
-                {formatMetricValue(cell.weeklyAverage, cell.unit, cell.decimals)}
+                {formatMetricValue(cell.baselineMean, cell.unit, cell.decimals)}
               </td>
               <td
                 className={`text-right py-1.5 px-3 tabular-nums ${percentColor(
-                  cell.pctOfWeeklyAvg
-                )} ${percentBg(cell.pctOfWeeklyAvg)}`}
+                  cell.pctOfBaseline
+                )} ${percentBg(cell.pctOfBaseline)}`}
               >
                 {cell.suppressPercent
                   ? "—"
-                  : cell.pctOfWeeklyAvg == null
+                  : cell.pctOfBaseline == null
                     ? "—"
-                    : `${cell.pctOfWeeklyAvg.toFixed(0)}%`}
+                    : `${cell.pctOfBaseline.toFixed(0)}%`}
               </td>
             </tr>
           ))}

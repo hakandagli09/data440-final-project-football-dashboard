@@ -12,6 +12,7 @@ interface PlayerStatusSelectProps {
 
 const OPTIONS: Array<{ value: PlayerStatus; label: string }> = [
   { value: "cleared", label: "Cleared" },
+  { value: "modified_load", label: "Modified Load" },
   { value: "injured", label: "Injured" },
   { value: "rehab", label: "Rehab" },
   { value: "return_to_play", label: "Return To Play" },

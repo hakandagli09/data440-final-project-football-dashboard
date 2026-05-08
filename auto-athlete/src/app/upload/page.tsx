@@ -21,6 +21,7 @@ import { useDropzone } from "react-dropzone";
 const UPLOAD_CONCURRENCY = 4;
 
 type UploadStatus = "ready" | "uploading" | "complete" | "error";
+type UploadSeason = "spring" | "summer" | "fall";
 
 interface UploadedFile {
   /** Stable UUID assigned when the file is queued — used for state
@@ -30,6 +31,7 @@ interface UploadedFile {
   name: string;
   size: number;
   file: File;
+  season: UploadSeason;
   status: UploadStatus;
   result?: UploadResult;
   error?: string;
@@ -60,6 +62,12 @@ const CSV_TYPE_LABELS: Record<string, string> = {
   nordbord: "NordBord (Nordic)",
 };
 
+const SEASON_OPTIONS: Array<{ value: UploadSeason; label: string; desc: string }> = [
+  { value: "spring", label: "Spring Season", desc: "Spring ball practices and tests" },
+  { value: "summer", label: "Summer Sessions", desc: "Summer training block" },
+  { value: "fall", label: "In Season / Fall", desc: "Camp, games, and fall practices" },
+];
+
 /**
  * Minimal UUID helper that falls back to a Math.random-based id on
  * environments where crypto.randomUUID is unavailable (older browsers
@@ -74,6 +82,7 @@ function makeId(): string {
 
 export default function UploadPage(): JSX.Element {
   const [files, setFiles] = useState<UploadedFile[]>([]);
+  const [season, setSeason] = useState<UploadSeason>("summer");
 
   // Track which ids are currently in-flight so we can enforce the
   // concurrency cap without racing the React state update cycle.
@@ -97,6 +106,7 @@ export default function UploadPage(): JSX.Element {
       patchFile(entry.id, { status: "uploading" });
       const formData = new FormData();
       formData.append("file", entry.file);
+      formData.append("season", entry.season);
 
       try {
         const res = await fetch("/api/upload", { method: "POST", body: formData });
@@ -167,12 +177,13 @@ export default function UploadPage(): JSX.Element {
         name: f.name,
         size: f.size,
         file: f,
+        season,
         status: "ready" as const,
       }));
       setFiles((prev) => [...prev, ...newEntries]);
       void runBatch(newEntries);
     },
-    [runBatch]
+    [runBatch, season]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -187,43 +198,48 @@ export default function UploadPage(): JSX.Element {
     return `${(bytes / 1048576).toFixed(1)} MB`;
   };
 
-  /** Running tallies for the summary banner. Recomputed on every state
-   *  change; O(N) over the queue which is small enough that memoization
-   *  is mostly cosmetic here. */
+  const visibleFiles = useMemo(
+    () => files.filter((file) => file.season === season),
+    [files, season]
+  );
+
+  const seasonLabel = SEASON_OPTIONS.find((option) => option.value === season)?.label ?? "Selected Season";
+
+  /** Running tallies for the selected season's summary banner. */
   const stats = useMemo(() => {
     let ready = 0;
     let uploading = 0;
     let complete = 0;
     let errored = 0;
-    for (const f of files) {
+    for (const f of visibleFiles) {
       if (f.status === "ready") ready += 1;
       else if (f.status === "uploading") uploading += 1;
       else if (f.status === "complete") complete += 1;
       else if (f.status === "error") errored += 1;
     }
-    return { ready, uploading, complete, errored, total: files.length };
-  }, [files]);
+    return { ready, uploading, complete, errored, total: visibleFiles.length };
+  }, [visibleFiles]);
 
   const isProcessing = stats.uploading > 0 || stats.ready > 0;
 
   /** Retry every errored file by resetting it to ready and re-running. */
   const retryFailed = useCallback((): void => {
-    const failed = files.filter((f) => f.status === "error");
+    const failed = visibleFiles.filter((f) => f.status === "error");
     if (failed.length === 0) return;
     setFiles((prev) =>
       prev.map((f) => (f.status === "error" ? { ...f, status: "ready", error: undefined } : f))
     );
     void runBatch(failed.map((f) => ({ ...f, status: "ready" as const, error: undefined })));
-  }, [files, runBatch]);
+  }, [runBatch, visibleFiles]);
 
-  /** Remove every completed row from the queue — leaves failed/uploading in place. */
+  /** Remove completed rows from the currently selected season queue. */
   const clearCompleted = useCallback((): void => {
-    setFiles((prev) => prev.filter((f) => f.status !== "complete"));
-  }, []);
+    setFiles((prev) => prev.filter((f) => f.season !== season || f.status !== "complete"));
+  }, [season]);
 
   const clearAll = useCallback((): void => {
-    setFiles([]);
-  }, []);
+    setFiles((prev) => prev.filter((f) => f.season !== season));
+  }, [season]);
 
   const GUIDE_STEPS: UploadGuideStep[] = [
     {
@@ -270,6 +286,41 @@ export default function UploadPage(): JSX.Element {
       </div>
 
       {/* ── Drop Zone ────────────────────────────────────── */}
+      <div className="bg-aa-surface border border-aa-border rounded-xl p-4 opacity-0 animate-slide-up" style={{ animationDelay: "75ms" }}>
+        <div className="flex items-center justify-between gap-4 mb-3">
+          <div>
+            <h2 className="font-display text-xl tracking-[0.06em] text-aa-text">TRAINING SEASON</h2>
+            <p className="text-xs text-aa-text-secondary mt-0.5">
+              Every upload is tagged so the flagging board compares players within the right training block.
+            </p>
+          </div>
+          <span className="text-[10px] font-mono uppercase tracking-wider text-aa-warning">Required</span>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          {SEASON_OPTIONS.map((option) => {
+            const selected = season === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setSeason(option.value)}
+                className={`rounded-lg border p-3 text-left transition-all ${
+                  selected
+                    ? "border-aa-accent bg-aa-accent/10 text-aa-text"
+                    : "border-aa-border bg-aa-bg/50 text-aa-text-secondary hover:border-aa-border-bright hover:text-aa-text"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`h-2.5 w-2.5 rounded-full ${selected ? "bg-aa-accent" : "bg-aa-text-dim"}`} />
+                  <span className="text-xs font-bold uppercase tracking-wider">{option.label}</span>
+                </div>
+                <p className="mt-1 text-[11px] text-aa-text-dim">{option.desc}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div
         {...getRootProps()}
         className={`
@@ -345,14 +396,14 @@ export default function UploadPage(): JSX.Element {
       </div>
 
       {/* ── Summary Banner ───────────────────────────────── */}
-      {files.length > 0 && (
+      {visibleFiles.length > 0 && (
         <div
           className="bg-aa-surface border border-aa-border rounded-xl px-5 py-3 flex items-center justify-between flex-wrap gap-3 opacity-0 animate-slide-up"
           style={{ animationDelay: "150ms" }}
         >
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-xs font-bold tracking-wider uppercase text-aa-text-secondary">
-              {isProcessing ? "Uploading…" : "Batch Complete"}
+              {seasonLabel} {isProcessing ? "Uploading…" : "Queue Complete"}
             </span>
             <StatPill label="Total" value={stats.total} tone="neutral" />
             {stats.uploading > 0 && <StatPill label="In Flight" value={stats.uploading} tone="accent" />}
@@ -379,7 +430,7 @@ export default function UploadPage(): JSX.Element {
                 Clear Completed
               </button>
             )}
-            {!isProcessing && files.length > 0 && (
+            {!isProcessing && visibleFiles.length > 0 && (
               <button
                 type="button"
                 onClick={clearAll}
@@ -393,12 +444,12 @@ export default function UploadPage(): JSX.Element {
       )}
 
       {/* ── File Queue ───────────────────────────────────── */}
-      {files.length > 0 && (
+      {visibleFiles.length > 0 && (
         <div className="bg-aa-surface border border-aa-border rounded-xl overflow-hidden opacity-0 animate-slide-up" style={{ animationDelay: "200ms" }}>
           <div className="flex items-center justify-between px-5 py-3 border-b border-aa-border bg-aa-bg/50">
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold tracking-wider uppercase text-aa-text-secondary">
-                Upload Queue
+                {seasonLabel} Upload Queue
               </span>
               <span className="px-2 py-0.5 rounded-full bg-aa-accent/10 text-[10px] font-mono font-bold text-aa-accent">
                 {files.length}
@@ -409,7 +460,7 @@ export default function UploadPage(): JSX.Element {
             </span>
           </div>
           <div className="divide-y divide-aa-border/50 max-h-[480px] overflow-y-auto">
-            {files.map((file, i) => (
+            {visibleFiles.map((file, i) => (
               <div key={file.id}>
                 <div
                   className="flex items-center gap-4 px-5 py-3 hover:bg-aa-elevated/30 transition-colors opacity-0 animate-slide-in-left"

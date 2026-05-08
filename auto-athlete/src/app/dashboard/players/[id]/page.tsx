@@ -8,6 +8,7 @@ import { formatLbs } from "@/lib/units";
 
 interface PageProps {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ date?: string }>;
 }
 
 function num(value: number | null, decimals = 1): string {
@@ -43,9 +44,11 @@ function TrendBars({
   );
 }
 
-export default async function PlayerProfilePage({ params }: PageProps) {
+export default async function PlayerProfilePage({ params, searchParams }: PageProps) {
   const { id } = await params;
-  const profile = await getPlayerProfile(id);
+  const query = await searchParams;
+  const selectedDate = query?.date;
+  const profile = await getPlayerProfile(id, selectedDate);
   if (!profile) notFound();
 
   const speedValues = profile.trends.map((t) => t.pctMaxSpeed);
@@ -65,7 +68,23 @@ export default async function PlayerProfilePage({ params }: PageProps) {
           </h1>
           <p className="mt-1 text-sm text-aa-text-secondary">
             {profile.position} player profile
+            {profile.selectedDate ? ` · viewing ${formatSessionDate(profile.selectedDate)}` : ""}
           </p>
+          {profile.selectedDate && (
+            <div className="mt-3 flex items-center gap-3 text-xs">
+              <Link
+                href={`/dashboard/reports?date=${profile.selectedDate}&player=${profile.id}`}
+                className="text-aa-accent hover:text-aa-accent/80 transition-colors"
+              >
+                View this day in Reports
+              </Link>
+              {!profile.selectedDateHasGps && (
+                <span className="text-aa-warning">
+                  No GPS rows for this player on that date; date-specific GPS metrics will be blank.
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div className="w-[240px] space-y-2">
           <PlayerStatusBadge status={profile.status} />
@@ -108,7 +127,9 @@ export default async function PlayerProfilePage({ params }: PageProps) {
       <div className="bg-aa-surface border border-aa-border rounded-xl p-4">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-lg tracking-[0.06em] text-aa-text">DATA FRESHNESS</h2>
-          <span className="text-[10px] uppercase tracking-wider text-aa-text-dim">Latest by source</span>
+          <span className="text-[10px] uppercase tracking-wider text-aa-text-dim">
+            {profile.selectedDate ? "Selected report context" : "Latest by source"}
+          </span>
         </div>
         <div className="mt-3 grid grid-cols-4 gap-3">
           <div className="rounded-lg bg-aa-bg/50 p-3 border border-aa-border/40">
@@ -161,7 +182,7 @@ export default async function PlayerProfilePage({ params }: PageProps) {
           </div>
           {profile.trends.length > 0 && (
             <p className="text-[11px] text-aa-text-dim">
-              Latest: {formatSessionDate(profile.trends[profile.trends.length - 1].date)}
+              Through: {formatSessionDate(profile.trends[profile.trends.length - 1].date)}
             </p>
           )}
         </div>
@@ -236,6 +257,7 @@ export default async function PlayerProfilePage({ params }: PageProps) {
         <h2 className="font-display text-xl tracking-[0.06em] text-aa-text mb-1">REQUIRED METRICS</h2>
         <p className="text-xs text-aa-text-secondary mb-4">
           {profile.requiredMetrics.group === "bigs" ? "Bigs" : "Skills / Mids"} daily metric set
+          {profile.selectedDate ? ` for ${formatSessionDate(profile.selectedDate)}` : ""}
         </p>
         <div className="grid grid-cols-2 gap-3">
           {profile.requiredMetrics.items.map((metric) => (

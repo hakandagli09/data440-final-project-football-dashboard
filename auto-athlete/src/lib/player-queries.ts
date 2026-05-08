@@ -2,8 +2,27 @@ import { supabaseServer as supabase } from "@/lib/supabase-server";
 import { getPositionGroup, getPositionGroupLabel } from "@/lib/position-groups";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { kgToLbs } from "@/lib/units";
+import { computeEwma } from "@/lib/derived-metrics";
+import { cleanupPlayersWithoutData } from "@/lib/player-cleanup";
+import {
+  computePlayerFlags,
+  computeSprintRecencySummary,
+  flagLabels,
+  getNormalizedHsr,
+  readinessFromFlagCount,
+  type FlagJumpRow,
+  type PlayerStatus,
+} from "@/lib/flagging";
 
-export type PlayerStatus = "injured" | "rehab" | "return_to_play" | "cleared";
+export type { PlayerStatus };
+
+export type TrainingSeason = "spring" | "summer" | "fall";
+
+export const SEASON_LABELS: Record<TrainingSeason, string> = {
+  spring: "Spring Season",
+  summer: "Summer Sessions",
+  fall: "In Season / Fall",
+};
 
 export interface PlayerListItem {
   id: string;
@@ -16,10 +35,27 @@ export interface PlayerListItem {
   flags: string[];
 }
 
+export interface SeasonFlaggingData {
+  activeSeason: TrainingSeason | null;
+  seasonLabel: string;
+  players: PlayerListItem[];
+  counts: {
+    total: number;
+    green: number;
+    yellow: number;
+    red: number;
+    neutral: number;
+    managed: number;
+    flagged: number;
+  };
+}
+
 export interface PlayerProfileData {
   id: string;
   name: string;
   position: string;
+  selectedDate: string | null;
+  selectedDateHasGps: boolean;
   status: PlayerStatus;
   expectedReturn: string | null;
   sprintRecency: {
@@ -85,6 +121,7 @@ type GpsRow = {
   max_speed: number | null;
   pct_max_speed: number | null;
   high_speed_running: number | null;
+  distance_zone_4_6: number | null;
   distance_zone_6: number | null;
   dynamic_stress_load: number | null;
   accelerations_zone_4_6: number | null;
@@ -97,172 +134,203 @@ type GpsRow = {
   collision_load: number | null;
 };
 
-function daysBetween(fromDate: string, toDate: string): number {
-  const from = new Date(`${fromDate}T00:00:00Z`).getTime();
-  const to = new Date(`${toDate}T00:00:00Z`).getTime();
-  return Math.floor((to - from) / (1000 * 60 * 60 * 24));
+function avgNullable(values: Array<number | null | undefined>): number | null {
+  const finite = values.filter((value): value is number => value != null && Number.isFinite(value));
+  if (finite.length === 0) return null;
+  return finite.reduce((sum, value) => sum + value, 0) / finite.length;
 }
 
-function average(values: number[]): number {
-  if (values.length === 0) return 0;
-  return values.reduce((sum, v) => sum + v, 0) / values.length;
+function sumNullable(values: Array<number | null | undefined>): number | null {
+  const finite = values.filter((value): value is number => value != null && Number.isFinite(value));
+  if (finite.length === 0) return null;
+  return finite.reduce((sum, value) => sum + value, 0);
 }
 
-function stdDev(values: number[]): number {
-  if (values.length < 2) return 0;
-  const mean = average(values);
-  const variance = average(values.map((v) => (v - mean) ** 2));
-  return Math.sqrt(variance);
+function maxNullable(values: Array<number | null | undefined>): number | null {
+  const finite = values.filter((value): value is number => value != null && Number.isFinite(value));
+  if (finite.length === 0) return null;
+  return Math.max(...finite);
 }
 
-function ewmaSeries(values: number[], lambda = 0.28): number[] {
-  if (values.length === 0) return [];
-  const out: number[] = [values[0]];
-  for (let i = 1; i < values.length; i++) {
-    out.push(lambda * values[i] + (1 - lambda) * out[i - 1]);
-  }
-  return out;
+function aggregateGpsRowsForDate(rows: GpsRow[], date: string): GpsRow | null {
+  const dayRows = rows.filter((row) => row.session_date === date);
+  if (dayRows.length === 0) return null;
+
+  return {
+    player_id: dayRows[0].player_id,
+    session_date: date,
+    max_speed: maxNullable(dayRows.map((row) => row.max_speed)),
+    pct_max_speed: maxNullable(dayRows.map((row) => row.pct_max_speed)),
+    high_speed_running: sumNullable(dayRows.map((row) => row.high_speed_running)),
+    distance_zone_4_6: sumNullable(dayRows.map((row) => row.distance_zone_4_6)),
+    distance_zone_6: sumNullable(dayRows.map((row) => row.distance_zone_6)),
+    dynamic_stress_load: sumNullable(dayRows.map((row) => row.dynamic_stress_load)),
+    accelerations_zone_4_6: sumNullable(dayRows.map((row) => row.accelerations_zone_4_6)),
+    decelerations_zone_4_6: sumNullable(dayRows.map((row) => row.decelerations_zone_4_6)),
+    hml_efforts: sumNullable(dayRows.map((row) => row.hml_efforts)),
+    total_distance: sumNullable(dayRows.map((row) => row.total_distance)),
+    hml_distance: sumNullable(dayRows.map((row) => row.hml_distance)),
+    hmld_per_minute: avgNullable(dayRows.map((row) => row.hmld_per_minute)),
+    lower_speed_loading: sumNullable(dayRows.map((row) => row.lower_speed_loading)),
+    collision_load: sumNullable(dayRows.map((row) => row.collision_load)),
+  };
+}
+
+type InjuryStatusRow = {
+  player_id?: string;
+  status: PlayerStatus;
+  injury_date: string | null;
+  expected_return: string | null;
+  updated_at: string | null;
+};
+
+function isTrainingSeason(value: unknown): value is TrainingSeason {
+  return value === "spring" || value === "summer" || value === "fall";
+}
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function statusDate(row: InjuryStatusRow): string {
+  return row.injury_date ?? row.updated_at?.slice(0, 10) ?? todayIsoDate();
+}
+
+function isManagedStatus(status: PlayerStatus): boolean {
+  return status !== "cleared";
 }
 
 function latestStatus(
-  statuses: Array<{ status: PlayerStatus; expected_return: string | null }>
+  statuses: InjuryStatusRow[],
+  today = todayIsoDate()
 ): { status: PlayerStatus; expectedReturn: string | null } {
   if (statuses.length === 0) return { status: "cleared", expectedReturn: null };
+  const latest = statuses[0];
+  if (latest.status === "modified_load" && latest.expected_return && latest.expected_return < today) {
+    return { status: "cleared", expectedReturn: null };
+  }
   return {
-    status: statuses[0].status,
-    expectedReturn: statuses[0].expected_return,
+    status: latest.status,
+    expectedReturn: latest.expected_return,
   };
 }
 
-function sprintRecencyFlags(rows: GpsRow[]): {
-  daysSince90: number | null;
-  daysSince85: number | null;
-  maxSpeed: number | null;
-} {
-  // Recency is computed relative to the most recent available session date.
-  if (rows.length === 0) return { daysSince90: null, daysSince85: null, maxSpeed: null };
-  const maxSpeed = Math.max(...rows.map((r) => r.max_speed ?? 0));
-  if (maxSpeed <= 0) return { daysSince90: null, daysSince85: null, maxSpeed: null };
+function isDateInsideManagedWindow(date: string, statuses: InjuryStatusRow[]): boolean {
+  const ascending = [...statuses].sort((a, b) => statusDate(a).localeCompare(statusDate(b)));
 
-  const latestDate = rows[rows.length - 1].session_date;
-  const threshold90 = maxSpeed * 0.9;
-  const threshold85 = maxSpeed * 0.85;
+  for (let index = 0; index < ascending.length; index++) {
+    const status = ascending[index];
+    if (!isManagedStatus(status.status)) continue;
 
-  const last90 = [...rows].reverse().find((r) => (r.max_speed ?? 0) >= threshold90)?.session_date ?? null;
-  const last85 = [...rows].reverse().find((r) => (r.max_speed ?? 0) >= threshold85)?.session_date ?? null;
+    const start = statusDate(status);
+    const nextStatusDate = ascending[index + 1] ? statusDate(ascending[index + 1]) : null;
+    const end = status.expected_return ?? nextStatusDate;
 
-  return {
-    daysSince90: last90 ? daysBetween(last90, latestDate) : null,
-    daysSince85: last85 ? daysBetween(last85, latestDate) : null,
-    maxSpeed,
-  };
-}
-
-function ewmaDropFlags(rows: GpsRow[]): string[] {
-  // EWMA comparisons use per-player daily aggregates and a personal baseline.
-  const dailyByDate = new Map<string, {
-    hsr: number;
-    sprint: number;
-    accelDecel: number;
-    explosive: number;
-  }>();
-
-  for (const row of rows) {
-    const curr = dailyByDate.get(row.session_date) ?? {
-      hsr: 0,
-      sprint: 0,
-      accelDecel: 0,
-      explosive: 0,
-    };
-    curr.hsr += row.high_speed_running ?? 0;
-    curr.sprint += row.distance_zone_6 ?? 0;
-    curr.accelDecel += (row.accelerations_zone_4_6 ?? 0) + (row.decelerations_zone_4_6 ?? 0);
-    curr.explosive += row.hml_efforts ?? 0;
-    dailyByDate.set(row.session_date, curr);
+    if (date >= start && (end == null || date <= end)) return true;
   }
 
-  const daily = Array.from(dailyByDate.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map((entry) => entry[1]);
-
-  const checks: Array<{ key: keyof typeof daily[number]; label: string }> = [
-    { key: "hsr", label: "HSR EWMA below baseline" },
-    { key: "sprint", label: "Sprint distance EWMA below baseline" },
-    { key: "accelDecel", label: "Accel/Decel EWMA below baseline" },
-    { key: "explosive", label: "Explosive efforts EWMA below baseline" },
-  ];
-
-  const flags: string[] = [];
-  for (const check of checks) {
-    const series = daily.map((d) => d[check.key]);
-    if (series.length < 5) continue;
-    const ewma = ewmaSeries(series);
-    const baselineMean = average(ewma);
-    const baselineStd = stdDev(ewma);
-    const latest = ewma[ewma.length - 1];
-    if (baselineStd > 0 && latest < baselineMean - baselineStd) {
-      flags.push(check.label);
-    }
-  }
-  return flags;
+  return false;
 }
 
-function computeFlags(rows: GpsRow[], status: PlayerStatus): string[] {
-  if (status === "injured" || status === "rehab") return [];
-  const flags: string[] = [];
-  const recency = sprintRecencyFlags(rows);
-  if (recency.daysSince90 != null && recency.daysSince90 >= 7) {
-    flags.push(`No 90% speed exposure in ${recency.daysSince90} days`);
-  }
-  if (recency.daysSince85 != null && recency.daysSince85 >= 10) {
-    flags.push(`No 85% speed exposure in ${recency.daysSince85} days`);
-  }
-  flags.push(...ewmaDropFlags(rows));
-  return flags;
+function filterHealthyGpsRows<T extends { session_date: string }>(
+  rows: T[],
+  statuses: InjuryStatusRow[]
+): T[] {
+  return rows.filter((row) => !isDateInsideManagedWindow(row.session_date, statuses));
 }
 
-function readinessFromFlags(flags: string[]): "green" | "yellow" | "red" | "neutral" {
-  if (flags.length === 0) return "green";
-  if (flags.length >= 3) return "red";
-  return "yellow";
+function filterHealthyJumpRows<T extends { test_date: string }>(
+  rows: T[],
+  statuses: InjuryStatusRow[]
+): T[] {
+  return rows.filter((row) => !isDateInsideManagedWindow(row.test_date, statuses));
 }
 
-export async function getPlayersList(): Promise<PlayerListItem[]> {
+export async function getActiveTrainingSeason(): Promise<TrainingSeason | null> {
+  const { data } = await supabase
+    .from("uploads")
+    .select("season")
+    .eq("csv_type", "gps")
+    .not("season", "is", null)
+    .order("uploaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return isTrainingSeason(data?.season) ? data.season : null;
+}
+
+async function getUploadIdsForSeason(season: TrainingSeason, csvType?: "gps" | "jump"): Promise<string[]> {
+  let query = supabase
+    .from("uploads")
+    .select("id")
+    .eq("season", season);
+
+  if (csvType) query = query.eq("csv_type", csvType);
+  const { data } = await query;
+  return (data ?? []).map((row) => row.id as string);
+}
+
+export async function getPlayersList(seasonOverride?: TrainingSeason | null): Promise<PlayerListItem[]> {
   type RosterGpsRow = {
     player_id: string;
     session_date: string;
     max_speed: number | null;
     high_speed_running: number | null;
+    distance_zone_4_6: number | null;
     distance_zone_6: number | null;
     accelerations_zone_4_6: number | null;
     decelerations_zone_4_6: number | null;
     hml_efforts: number | null;
   };
+  type RosterJumpRow = FlagJumpRow & { player_id: string };
 
-  // Full-history GPS fetch (no date filter) across all players will
-  // hit PostgREST's 1000-row cap immediately on a populated table, so
-  // page through it — otherwise the roster's flag/readiness counts are
-  // computed from a truncated slice of the data.
-  const [{ data: players }, { data: injuries }, gpsRowsAll] = await Promise.all([
+  // Keep testing/reset flows honest: roster rows should not survive after
+  // all uploaded performance data for a player has been removed.
+  await cleanupPlayersWithoutData();
+
+  const activeSeason = seasonOverride === undefined ? await getActiveTrainingSeason() : seasonOverride;
+  const [gpsUploadIds, jumpUploadIds] = activeSeason
+    ? await Promise.all([
+        getUploadIdsForSeason(activeSeason, "gps"),
+        getUploadIdsForSeason(activeSeason, "jump"),
+      ])
+    : [[], []];
+
+  const [{ data: players }, { data: injuries }, gpsRowsAll, jumpRowsAll] = await Promise.all([
     supabase.from("players").select("id, name, position").order("name", { ascending: true }),
     supabase
       .from("injuries")
-      .select("player_id, status, expected_return, updated_at")
+      .select("player_id, status, injury_date, expected_return, updated_at")
       .order("updated_at", { ascending: false }),
-    fetchAllRows<RosterGpsRow>(() =>
-      supabase
-        .from("gps_sessions")
-        .select("player_id, session_date, max_speed, high_speed_running, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts")
-    ),
+    gpsUploadIds.length > 0
+      ? fetchAllRows<RosterGpsRow>(() =>
+          supabase
+            .from("gps_sessions")
+            .select("player_id, session_date, max_speed, high_speed_running, distance_zone_4_6, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts")
+            .in("upload_id", gpsUploadIds)
+        )
+      : Promise.resolve([] as RosterGpsRow[]),
+    jumpUploadIds.length > 0
+      ? fetchAllRows<RosterJumpRow>(() =>
+          supabase
+            .from("jump_tests")
+            .select("player_id, test_date, test_time, jump_height_cm, jump_height_in, rsi_modified, concentric_impulse, eccentric_braking_impulse, eccentric_duration_ms, contraction_time_ms")
+            .in("upload_id", jumpUploadIds)
+        )
+      : Promise.resolve([] as RosterJumpRow[]),
   ]);
   const gpsRows = gpsRowsAll;
+  const jumpRows = jumpRowsAll;
 
-  const injuryMap = new Map<string, Array<{ status: PlayerStatus; expected_return: string | null }>>();
+  const injuryMap = new Map<string, InjuryStatusRow[]>();
   for (const row of injuries ?? []) {
     const list = injuryMap.get(row.player_id) ?? [];
     list.push({
+      player_id: row.player_id,
       status: row.status as PlayerStatus,
+      injury_date: row.injury_date,
       expected_return: row.expected_return,
+      updated_at: row.updated_at,
     });
     injuryMap.set(row.player_id, list);
   }
@@ -280,11 +348,30 @@ export async function getPlayersList(): Promise<PlayerListItem[]> {
     list.sort((a, b) => a.session_date.localeCompare(b.session_date));
   }
 
+  const jumpMap = new Map<string, RosterJumpRow[]>();
+  for (const row of jumpRows) {
+    const list = jumpMap.get(row.player_id) ?? [];
+    list.push(row);
+    jumpMap.set(row.player_id, list);
+  }
+
   const out: PlayerListItem[] = [];
   for (const player of players ?? []) {
-    const statusData = latestStatus(injuryMap.get(player.id) ?? []);
+    const statusRows = injuryMap.get(player.id) ?? [];
+    const statusData = latestStatus(statusRows);
     const rows = gpsMap.get(player.id) ?? [];
-    const flags = computeFlags(rows, statusData.status);
+    const jumpRowsForPlayer = jumpMap.get(player.id) ?? [];
+    if (rows.length === 0 && jumpRowsForPlayer.length === 0) continue;
+    const flagGpsRows = filterHealthyGpsRows(rows, statusRows);
+    const flagJumpRows = filterHealthyJumpRows(jumpRowsForPlayer, statusRows);
+
+    const flags = flagLabels(
+      computePlayerFlags({
+        status: statusData.status,
+        gpsRows: flagGpsRows,
+        jumpRows: flagJumpRows,
+      })
+    );
     const latestSessionDate = rows.length > 0 ? rows[rows.length - 1].session_date : null;
 
     out.push({
@@ -294,7 +381,7 @@ export async function getPlayersList(): Promise<PlayerListItem[]> {
       latestSessionDate,
       status: statusData.status,
       expectedReturn: statusData.expectedReturn,
-      readiness: rows.length === 0 ? "neutral" : readinessFromFlags(flags),
+      readiness: readinessFromFlagCount(flags.length, flagGpsRows.length > 0),
       flags,
     });
   }
@@ -302,9 +389,31 @@ export async function getPlayersList(): Promise<PlayerListItem[]> {
   return out;
 }
 
+export async function getSeasonFlaggingData(): Promise<SeasonFlaggingData> {
+  const activeSeason = await getActiveTrainingSeason();
+  const players = await getPlayersList(activeSeason);
+  const counts = {
+    total: players.length,
+    green: players.filter((player) => player.readiness === "green").length,
+    yellow: players.filter((player) => player.readiness === "yellow").length,
+    red: players.filter((player) => player.readiness === "red").length,
+    neutral: players.filter((player) => player.readiness === "neutral").length,
+    managed: players.filter((player) => player.status !== "cleared").length,
+    flagged: players.filter((player) => player.flags.length > 0).length,
+  };
+
+  return {
+    activeSeason,
+    seasonLabel: activeSeason ? SEASON_LABELS[activeSeason] : "No Season Selected",
+    players,
+    counts,
+  };
+}
+
 export async function getRosterCount(): Promise<RosterCountData> {
   const players = await getPlayersList();
   const statusCounts: Record<PlayerStatus, number> = {
+    modified_load: 0,
     injured: 0,
     rehab: 0,
     return_to_play: 0,
@@ -370,7 +479,18 @@ export async function getPlayersByStatus(
   };
 }
 
-export async function getPlayerProfile(playerId: string): Promise<PlayerProfileData | null> {
+export async function getPlayerProfile(
+  playerId: string,
+  selectedDate?: string | null
+): Promise<PlayerProfileData | null> {
+  const activeSeason = await getActiveTrainingSeason();
+  const [gpsUploadIds, jumpUploadIds] = activeSeason
+    ? await Promise.all([
+        getUploadIdsForSeason(activeSeason, "gps"),
+        getUploadIdsForSeason(activeSeason, "jump"),
+      ])
+    : [[], []];
+
   // At drill-level granularity a single player can accumulate >1000
   // rows over a full season (~13 drills/practice × ~50 practices), so
   // paginate their GPS history here too.
@@ -378,23 +498,28 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
     supabase.from("players").select("id, name, position").eq("id", playerId).maybeSingle(),
     supabase
       .from("injuries")
-      .select("status, expected_return, updated_at")
+      .select("status, injury_date, expected_return, updated_at")
       .eq("player_id", playerId)
-      .order("updated_at", { ascending: false })
-      .limit(1),
-    fetchAllRows<GpsRow>(() =>
-      supabase
-        .from("gps_sessions")
-        .select("player_id, session_date, max_speed, pct_max_speed, high_speed_running, distance_zone_6, dynamic_stress_load, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, total_distance, hml_distance, hmld_per_minute, lower_speed_loading, collision_load")
-        .eq("player_id", playerId)
-        .order("session_date", { ascending: true })
-    ),
-    supabase
-      .from("jump_tests")
-      .select("test_date, jump_height_cm, jump_height_in, rsi_modified, body_weight_kg")
-      .eq("player_id", playerId)
-      .order("test_date", { ascending: false })
-      .limit(1),
+      .order("updated_at", { ascending: false }),
+    gpsUploadIds.length > 0
+      ? fetchAllRows<GpsRow>(() =>
+          supabase
+            .from("gps_sessions")
+            .select("player_id, session_date, max_speed, pct_max_speed, high_speed_running, distance_zone_4_6, distance_zone_6, dynamic_stress_load, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, total_distance, hml_distance, hmld_per_minute, lower_speed_loading, collision_load")
+            .eq("player_id", playerId)
+            .in("upload_id", gpsUploadIds)
+            .order("session_date", { ascending: true })
+        )
+      : Promise.resolve([] as GpsRow[]),
+    jumpUploadIds.length > 0
+      ? supabase
+          .from("jump_tests")
+          .select("player_id, test_date, test_time, jump_height_cm, jump_height_in, rsi_modified, body_weight_kg, concentric_impulse, eccentric_braking_impulse, eccentric_duration_ms, contraction_time_ms")
+          .eq("player_id", playerId)
+          .in("upload_id", jumpUploadIds)
+          .order("test_date", { ascending: false })
+          .order("test_time", { ascending: false })
+      : Promise.resolve({ data: [] }),
     supabase
       .from("force_frame_tests")
       .select("test_date, direction, l_max_force, r_max_force, max_imbalance")
@@ -410,11 +535,23 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
 
   if (!player) return null;
 
-  const status = (injuries?.[0]?.status as PlayerStatus | undefined) ?? "cleared";
-  const expectedReturn = injuries?.[0]?.expected_return ?? null;
+  const statusRows = (injuries ?? []).map((row) => ({
+    status: row.status as PlayerStatus,
+    injury_date: row.injury_date,
+    expected_return: row.expected_return,
+    updated_at: row.updated_at,
+  }));
+  const statusData = latestStatus(statusRows);
+  const status = statusData.status;
+  const expectedReturn = statusData.expectedReturn;
   const rows = gpsRowsAll;
-  const recency = sprintRecencyFlags(rows);
-  const flags = computeFlags(rows, status);
+  const latestGpsDate = rows.length > 0 ? rows[rows.length - 1].session_date : null;
+  const displayDate = selectedDate ?? latestGpsDate;
+  const displayGps = displayDate ? aggregateGpsRowsForDate(rows, displayDate) : null;
+  const flagGpsRows = filterHealthyGpsRows(rows, statusRows);
+  const flagJumpRows = filterHealthyJumpRows(jumpRows ?? [], statusRows);
+  const recency = computeSprintRecencySummary(flagGpsRows);
+  const flags = flagLabels(computePlayerFlags({ status, gpsRows: flagGpsRows, jumpRows: flagJumpRows }));
 
   const byDate = new Map<string, {
     maxSpeed: number;
@@ -434,28 +571,30 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
     };
     curr.maxSpeed = Math.max(curr.maxSpeed, row.max_speed ?? 0);
     curr.pctMaxSpeed = Math.max(curr.pctMaxSpeed, row.pct_max_speed ?? 0);
-    curr.hsr += row.high_speed_running ?? 0;
+    curr.hsr += getNormalizedHsr(row);
     curr.sprintDistance += row.distance_zone_6 ?? 0;
     curr.dsl += row.dynamic_stress_load ?? 0;
     byDate.set(row.session_date, curr);
   }
 
-  const trends = Array.from(byDate.entries())
+  const trendsSource = Array.from(byDate.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
+    .filter(([date]) => !displayDate || date <= displayDate);
+  const trends = trendsSource
     .slice(-14)
     .map(([date, values]) => ({ date, ...values }));
 
   const latestJump = jumpRows?.[0];
   const latestSqueeze = forceRows?.find((row) => (row.direction ?? "").toLowerCase() === "squeeze");
   const latestNord = nordRows?.[0];
-  const latestGps = rows.length > 0 ? rows[rows.length - 1] : null;
+  const latestGps = displayGps;
   const group = getPositionGroup(player.position);
 
   const topSpeed = recency.maxSpeed ?? 0;
   const pctMaxVelocity = latestGps && topSpeed > 0 ? ((latestGps.max_speed ?? 0) / topSpeed) * 100 : null;
   const hsbi = latestGps ? (latestGps.decelerations_zone_4_6 ?? 0) * (latestGps.max_speed ?? 0) : null;
   const weeklyRows = rows.filter((r) => {
-    const latest = rows.length > 0 ? rows[rows.length - 1].session_date : null;
+    const latest = displayDate;
     if (!latest) return false;
     const latestMs = new Date(`${latest}T00:00:00Z`).getTime();
     const rowMs = new Date(`${r.session_date}T00:00:00Z`).getTime();
@@ -470,6 +609,7 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
 
   const dailyAgg = Array.from(byDate.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
+    .filter(([date]) => !displayDate || date <= displayDate)
     .map(([date, values]) => ({
       hsr: values.hsr,
       sprintDistance: values.sprintDistance,
@@ -481,10 +621,10 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
         .reduce((sum, r) => sum + (r.hml_efforts ?? 0), 0),
     }));
 
-  const ewmaHsr = dailyAgg.length > 0 ? ewmaSeries(dailyAgg.map((d) => d.hsr)).at(-1) ?? null : null;
-  const ewmaZone6 = dailyAgg.length > 0 ? ewmaSeries(dailyAgg.map((d) => d.sprintDistance)).at(-1) ?? null : null;
-  const ewmaAccelDecel = dailyAgg.length > 0 ? ewmaSeries(dailyAgg.map((d) => d.accelDecel)).at(-1) ?? null : null;
-  const ewmaExplosive = dailyAgg.length > 0 ? ewmaSeries(dailyAgg.map((d) => d.explosive)).at(-1) ?? null : null;
+  const ewmaHsr = dailyAgg.length > 0 ? computeEwma(dailyAgg.map((d) => d.hsr)).at(-1) ?? null : null;
+  const ewmaZone6 = dailyAgg.length > 0 ? computeEwma(dailyAgg.map((d) => d.sprintDistance)).at(-1) ?? null : null;
+  const ewmaAccelDecel = dailyAgg.length > 0 ? computeEwma(dailyAgg.map((d) => d.accelDecel)).at(-1) ?? null : null;
+  const ewmaExplosive = dailyAgg.length > 0 ? computeEwma(dailyAgg.map((d) => d.explosive)).at(-1) ?? null : null;
 
   // Required metrics are rendered as profile cards and differ by position group.
   // Distance values are stored in yards, speed in mph (StatSports Apex config).
@@ -495,7 +635,7 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
       { label: "Lower Speed Loading", value: latestGps?.lower_speed_loading ?? null, unit: "AU" },
       { label: "HML Distance", value: latestGps?.hml_distance ?? null, unit: "yd" },
       { label: "HMLD Per Minute", value: latestGps?.hmld_per_minute ?? null, unit: "yd/min" },
-      { label: "HSR", value: latestGps?.high_speed_running ?? null, unit: "yd" },
+      { label: "HSR", value: latestGps ? getNormalizedHsr(latestGps) : null, unit: "yd" },
       { label: "Zone 4-6 Accelerations", value: latestGps?.accelerations_zone_4_6 ?? null },
       { label: "Explosive Efforts", value: latestGps?.hml_efforts ?? null },
       { label: "Max Velocity", value: latestGps?.max_speed ?? null, unit: "mph" },
@@ -504,7 +644,7 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
     ]
     : [
       { label: "Total Distance", value: latestGps?.total_distance ?? null, unit: "yd" },
-      { label: "HSR", value: latestGps?.high_speed_running ?? null, unit: "yd" },
+      { label: "HSR", value: latestGps ? getNormalizedHsr(latestGps) : null, unit: "yd" },
       { label: "Zone 6 Sprint Distance", value: latestGps?.distance_zone_6 ?? null, unit: "yd" },
       { label: "Zone 4-6 Accelerations", value: latestGps?.accelerations_zone_4_6 ?? null },
       { label: "Zone 4-6 Decelerations", value: latestGps?.decelerations_zone_4_6 ?? null },
@@ -528,6 +668,8 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
     id: player.id,
     name: player.name,
     position: player.position ?? "—",
+    selectedDate: selectedDate ?? null,
+    selectedDateHasGps: selectedDate ? displayGps != null : true,
     status,
     expectedReturn,
     sprintRecency: {
@@ -540,8 +682,8 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
       jumpHeightCm: latestJump?.jump_height_cm ?? null,
       jumpHeightIn: latestJump?.jump_height_in ?? null,
       rsiModified: latestJump?.rsi_modified ?? null,
-      accelDecel46: rows.length > 0
-        ? (rows[rows.length - 1].accelerations_zone_4_6 ?? 0) + (rows[rows.length - 1].decelerations_zone_4_6 ?? 0)
+      accelDecel46: latestGps
+        ? (latestGps.accelerations_zone_4_6 ?? 0) + (latestGps.decelerations_zone_4_6 ?? 0)
         : null,
       groinSqueeze: latestSqueeze
         ? Math.max(latestSqueeze.l_max_force ?? 0, latestSqueeze.r_max_force ?? 0)
@@ -556,7 +698,7 @@ export async function getPlayerProfile(playerId: string): Promise<PlayerProfileD
       nordBordPct: latestNord?.max_imbalance ?? null,
     },
     dataFreshness: {
-      gps: latestGps?.session_date ?? null,
+      gps: displayGps?.session_date ?? null,
       jump: latestJump?.test_date ?? null,
       forceFrame: forceRows?.[0]?.test_date ?? null,
       nordBord: latestNord?.test_date ?? null,

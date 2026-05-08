@@ -8,6 +8,7 @@ interface Upload {
   id: string;
   filename: string;
   csv_type: string;
+  season: "spring" | "summer" | "fall" | null;
   uploaded_at: string;
   row_count: number | null;
   status: string;
@@ -29,6 +30,26 @@ const CSV_TYPE_COLORS: Record<string, string> = {
   nordbord: "bg-aa-warning/10 text-aa-warning border-aa-warning/20",
 };
 
+const SEASON_LABELS: Record<NonNullable<Upload["season"]>, string> = {
+  spring: "Spring Season",
+  summer: "Summer Sessions",
+  fall: "In Season / Fall",
+};
+
+const SEASON_COLORS: Record<NonNullable<Upload["season"]>, string> = {
+  spring: "bg-aa-success/10 text-aa-success border-aa-success/20",
+  summer: "bg-aa-accent/10 text-aa-accent border-aa-accent/20",
+  fall: "bg-aa-warm/10 text-aa-warm border-aa-warm/20",
+};
+
+function seasonLabel(season: Upload["season"]): string {
+  return season ? SEASON_LABELS[season] : "Not Tagged";
+}
+
+function seasonColor(season: Upload["season"]): string {
+  return season ? SEASON_COLORS[season] : "bg-aa-elevated text-aa-text-dim border-aa-border";
+}
+
 const FILTER_OPTIONS = [
   { value: "all", label: "All Types" },
   { value: "gps", label: "StatSports GPS" },
@@ -44,6 +65,19 @@ export default function DataManagementPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Upload | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // Rename modal — `renameTarget` is the upload being renamed (null when
+  // closed). `renameDraft` holds the in-flight value bound to the input.
+  // `renameError` surfaces server-side validation errors.
+  const [renameTarget, setRenameTarget] = useState<Upload | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  // Bulk selection — Set of upload IDs ticked via the row checkboxes /
+  // master checkbox. `bulkConfirm=true` opens the confirmation modal.
+  // `bulkDeleting` blocks repeat clicks while requests are in flight.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkConfirm, setBulkConfirm] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const fetchUploads = useCallback(async () => {
     setLoading(true);
@@ -59,6 +93,23 @@ export default function DataManagementPage() {
     fetchUploads();
   }, [fetchUploads]);
 
+  // Drop any selections that aren't visible after a filter change /
+  // refetch. Without this, switching from "All" to "GPS" while rows
+  // are checked would leave the bulk-action bar reporting a count
+  // that includes hidden uploads.
+  useEffect(() => {
+    setSelected((prev) => {
+      const visibleIds = new Set(uploads.map((u) => u.id));
+      // Array.from avoids the for-of-Set TS target/downlevel issue
+      // without changing the project's tsconfig target.
+      const next = new Set<string>();
+      for (const id of Array.from(prev)) {
+        if (visibleIds.has(id)) next.add(id);
+      }
+      return next;
+    });
+  }, [uploads]);
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -70,11 +121,122 @@ export default function DataManagementPage() {
     setDeleteTarget(null);
   };
 
+  /** Open the rename modal pre-filled with the existing filename. */
+  const openRename = (upload: Upload) => {
+    setRenameTarget(upload);
+    setRenameDraft(upload.filename);
+    setRenameError(null);
+  };
+
+  /** Close the rename modal and reset its draft state. */
+  const closeRename = () => {
+    if (renaming) return;
+    setRenameTarget(null);
+    setRenameDraft("");
+    setRenameError(null);
+  };
+
+  /**
+   * Submit the rename: PATCH the API, then patch the local list in
+   * place so the user sees the change without a full refetch.
+   */
+  const handleRename = async () => {
+    if (!renameTarget) return;
+    const trimmed = renameDraft.trim();
+    if (trimmed.length === 0) {
+      setRenameError("Filename cannot be empty.");
+      return;
+    }
+    if (trimmed === renameTarget.filename) {
+      // No-op — close without a request.
+      closeRename();
+      return;
+    }
+    setRenaming(true);
+    setRenameError(null);
+    const res = await fetch(`/api/uploads/${renameTarget.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: trimmed }),
+    });
+    if (res.ok) {
+      setUploads((prev) =>
+        prev.map((u) =>
+          u.id === renameTarget.id ? { ...u, filename: trimmed } : u
+        )
+      );
+      setRenaming(false);
+      setRenameTarget(null);
+      setRenameDraft("");
+      return;
+    }
+    const payload = await res.json().catch(() => ({}));
+    setRenameError(typeof payload.error === "string" ? payload.error : "Rename failed.");
+    setRenaming(false);
+  };
+
+  /** Toggle a single upload in the selection set. */
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  /** Select all currently-visible uploads, or clear if all already on. */
+  const toggleSelectAll = () => {
+    setSelected((prev) =>
+      prev.size === uploads.length && uploads.length > 0
+        ? new Set<string>()
+        : new Set(uploads.map((u) => u.id))
+    );
+  };
+
+  /**
+   * Bulk-delete all selected uploads. Fires individual DELETE requests
+   * in parallel against the existing per-id endpoint so we don't need
+   * a new API surface. Failures don't poison the success path — any
+   * id that returns ok is removed from the local list.
+   */
+  const handleBulkDelete = async () => {
+    if (selected.size === 0) return;
+    setBulkDeleting(true);
+    const ids = Array.from(selected);
+    const results = await Promise.allSettled(
+      ids.map((id) =>
+        fetch(`/api/uploads/${id}`, { method: "DELETE" }).then((r) =>
+          r.ok ? id : Promise.reject(new Error(`HTTP ${r.status}`))
+        )
+      )
+    );
+    const successes = new Set(
+      results
+        .filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled")
+        .map((r) => r.value)
+    );
+    if (successes.size > 0) {
+      setUploads((prev) => prev.filter((u) => !successes.has(u.id)));
+    }
+    setSelected(new Set());
+    setBulkDeleting(false);
+    setBulkConfirm(false);
+  };
+
   const formatDate = formatTimestamp;
   const formatTime = formatTimestampTime;
 
   const totalRows = uploads.reduce((sum, u) => sum + (u.row_count ?? 0), 0);
   const totalPlayers = new Set(uploads.flatMap((u) => u.players)).size;
+  // Aggregate stats for the bulk-confirm modal.
+  const selectedUploads = uploads.filter((u) => selected.has(u.id));
+  const selectedRowCount = selectedUploads.reduce(
+    (sum, u) => sum + (u.row_count ?? 0),
+    0
+  );
+  const allVisibleSelected =
+    uploads.length > 0 && selected.size === uploads.length;
 
   return (
     <div className="space-y-6">
@@ -117,21 +279,45 @@ export default function DataManagementPage() {
         ))}
       </div>
 
-      {/* Filter bar */}
-      <div className="flex items-center gap-2 opacity-0 animate-slide-up" style={{ animationDelay: "200ms" }}>
-        {FILTER_OPTIONS.map((opt) => (
-          <button
-            key={opt.value}
-            onClick={() => setFilter(opt.value)}
-            className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold tracking-wider transition-colors border ${
-              filter === opt.value
-                ? "bg-aa-accent/10 text-aa-accent border-aa-accent/20"
-                : "text-aa-text-dim hover:text-aa-text border-transparent hover:border-aa-border"
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
+      {/* Filter bar + bulk-action bar */}
+      <div className="flex items-center justify-between gap-3 opacity-0 animate-slide-up" style={{ animationDelay: "200ms" }}>
+        <div className="flex items-center gap-2 flex-wrap">
+          {FILTER_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setFilter(opt.value)}
+              className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold tracking-wider transition-colors border ${
+                filter === opt.value
+                  ? "bg-aa-accent/10 text-aa-accent border-aa-accent/20"
+                  : "text-aa-text-dim hover:text-aa-text border-transparent hover:border-aa-border"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Bulk-delete pill — only renders when at least one row is
+            ticked, so the bar isn't visually noisy in the common case. */}
+        {selected.size > 0 && (
+          <div className="flex items-center gap-3 px-3 py-1.5 rounded-lg border border-aa-danger/30 bg-aa-danger/10 animate-fade-in">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-aa-danger">
+              {selected.size} selected
+            </span>
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-[11px] font-mono uppercase tracking-wider text-aa-text-secondary hover:text-aa-text transition-colors"
+            >
+              Clear
+            </button>
+            <button
+              onClick={() => setBulkConfirm(true)}
+              className="px-3 py-1 rounded-md bg-aa-danger text-white text-[11px] font-semibold tracking-wider hover:bg-aa-danger/90 transition-colors"
+            >
+              Delete Selected
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Upload table */}
@@ -154,9 +340,22 @@ export default function DataManagementPage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-aa-border bg-aa-bg/50">
+                <th className="text-left px-4 py-3 w-10">
+                  {/* Master checkbox: select-all / clear-all visible
+                      uploads. Bound to `allVisibleSelected` for the
+                      checked state; the click handler toggles. */}
+                  <input
+                    type="checkbox"
+                    aria-label={allVisibleSelected ? "Clear selection" : "Select all"}
+                    checked={allVisibleSelected}
+                    onChange={toggleSelectAll}
+                    className="h-3.5 w-3.5 cursor-pointer accent-aa-accent"
+                  />
+                </th>
                 <th className="text-left text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-5 py-3 w-8" />
                 <th className="text-left text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-3">Filename</th>
                 <th className="text-left text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-3">Type</th>
+                <th className="text-left text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-3">Season</th>
                 <th className="text-left text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-3">Date</th>
                 <th className="text-right text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-3">Rows</th>
                 <th className="text-center text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-3">Status</th>
@@ -172,12 +371,24 @@ export default function DataManagementPage() {
 
                 return (
                   <tr key={upload.id} className="group" style={{ animationDelay: `${400 + i * 40}ms` }}>
-                    <td colSpan={7} className="p-0">
+                    <td colSpan={9} className="p-0">
                       {/* Main row */}
                       <div
                         className="flex items-center border-b border-aa-border/30 hover:bg-aa-elevated/30 transition-colors cursor-pointer"
                         onClick={() => setExpandedId(isExpanded ? null : upload.id)}
                       >
+                        {/* Row checkbox — stops propagation so toggling
+                            doesn't also expand/collapse the row. */}
+                        <div className="px-4 py-3.5 w-10">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${upload.filename}`}
+                            checked={selected.has(upload.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={() => toggleSelected(upload.id)}
+                            className="h-3.5 w-3.5 cursor-pointer accent-aa-accent"
+                          />
+                        </div>
                         <div className="px-5 py-3.5 w-8">
                           <svg
                             className={`w-3.5 h-3.5 text-aa-text-dim transition-transform duration-200 ${isExpanded ? "rotate-90" : ""}`}
@@ -195,6 +406,11 @@ export default function DataManagementPage() {
                         <div className="px-4 py-3.5">
                           <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${CSV_TYPE_COLORS[upload.csv_type] ?? "text-aa-text-dim"}`}>
                             {CSV_TYPE_LABELS[upload.csv_type] ?? upload.csv_type}
+                          </span>
+                        </div>
+                        <div className="px-4 py-3.5 min-w-[130px]">
+                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${seasonColor(upload.season)}`}>
+                            {seasonLabel(upload.season)}
                           </span>
                         </div>
                         <div className="px-4 py-3.5 min-w-[140px]">
@@ -224,7 +440,19 @@ export default function DataManagementPage() {
                             </span>
                           )}
                         </div>
-                        <div className="px-5 py-3.5 text-right min-w-[80px]">
+                        <div className="px-5 py-3.5 text-right min-w-[120px] flex items-center justify-end gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openRename(upload);
+                            }}
+                            className="p-1.5 rounded-lg text-aa-text-dim hover:text-aa-accent hover:bg-aa-accent/10 transition-colors"
+                            title="Rename upload"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.862 4.487zm0 0L19.5 7.125" />
+                            </svg>
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -304,6 +532,9 @@ export default function DataManagementPage() {
                                     Type: {CSV_TYPE_LABELS[upload.csv_type] ?? upload.csv_type}
                                   </p>
                                   <p className="text-xs text-aa-text-dim">
+                                    Season: {seasonLabel(upload.season)}
+                                  </p>
+                                  <p className="text-xs text-aa-text-dim">
                                     Uploaded: {formatDate(upload.uploaded_at)} at {formatTime(upload.uploaded_at)}
                                   </p>
                                   <p className="text-xs text-aa-text-dim">
@@ -364,6 +595,126 @@ export default function DataManagementPage() {
                 className="px-4 py-2 rounded-lg bg-aa-danger text-white text-sm font-semibold hover:bg-aa-danger/90 transition-colors disabled:opacity-40"
               >
                 {deleting ? "Deleting..." : "Delete Data"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk-delete confirmation modal */}
+      {bulkConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => !bulkDeleting && setBulkConfirm(false)}
+          />
+          <div className="relative bg-aa-surface border border-aa-border rounded-2xl p-6 w-full max-w-md shadow-2xl animate-slide-up">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-aa-danger/10 border border-aa-danger/20 flex items-center justify-center">
+                <svg className="w-5 h-5 text-aa-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-display text-xl tracking-[0.04em] text-aa-text">DELETE {selected.size} UPLOAD{selected.size === 1 ? "" : "S"}</h3>
+                <p className="text-xs text-aa-text-dim">This action cannot be undone</p>
+              </div>
+            </div>
+
+            <div className="bg-aa-bg rounded-lg border border-aa-border p-4 mb-5 max-h-48 overflow-y-auto">
+              <p className="text-xs text-aa-text-dim mb-2">
+                <strong className="text-aa-text">{selectedRowCount.toLocaleString()}</strong> total row{selectedRowCount === 1 ? "" : "s"} will be permanently removed across these files:
+              </p>
+              <ul className="space-y-1">
+                {selectedUploads.map((u) => (
+                  <li key={u.id} className="text-xs text-aa-text-secondary truncate">
+                    <span className="text-aa-text-dim mr-2 font-mono">·</span>
+                    {u.filename}
+                    <span className="text-aa-text-dim ml-2">
+                      ({(u.row_count ?? 0).toLocaleString()} rows)
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="flex items-center gap-3 justify-end">
+              <button
+                onClick={() => setBulkConfirm(false)}
+                disabled={bulkDeleting}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-aa-text-secondary hover:text-aa-text hover:bg-aa-elevated transition-colors disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting}
+                className="px-4 py-2 rounded-lg bg-aa-danger text-white text-sm font-semibold hover:bg-aa-danger/90 transition-colors disabled:opacity-40"
+              >
+                {bulkDeleting ? "Deleting..." : `Delete ${selected.size} Upload${selected.size === 1 ? "" : "s"}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename modal */}
+      {renameTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={closeRename}
+          />
+          <div className="relative bg-aa-surface border border-aa-border rounded-2xl p-6 w-full max-w-md shadow-2xl animate-slide-up">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-aa-accent/10 border border-aa-accent/20 flex items-center justify-center">
+                <svg className="w-5 h-5 text-aa-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.862 4.487zm0 0L19.5 7.125" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-display text-xl tracking-[0.04em] text-aa-text">RENAME UPLOAD</h3>
+                <p className="text-xs text-aa-text-dim">Display name only — does not affect parsed data</p>
+              </div>
+            </div>
+
+            <label className="block text-[10px] font-bold tracking-wider uppercase text-aa-text-dim mb-2">
+              Filename
+            </label>
+            <input
+              type="text"
+              value={renameDraft}
+              onChange={(e) => {
+                setRenameDraft(e.target.value);
+                if (renameError) setRenameError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleRename();
+                if (e.key === "Escape") closeRename();
+              }}
+              maxLength={255}
+              autoFocus
+              disabled={renaming}
+              className="w-full px-3 py-2 rounded-lg bg-aa-bg border border-aa-border text-sm text-aa-text font-mono focus:outline-none focus:border-aa-accent transition-colors disabled:opacity-40"
+            />
+            {renameError && (
+              <p className="mt-2 text-xs text-aa-danger">{renameError}</p>
+            )}
+
+            <div className="flex items-center gap-3 justify-end mt-5">
+              <button
+                onClick={closeRename}
+                disabled={renaming}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-aa-text-secondary hover:text-aa-text hover:bg-aa-elevated transition-colors disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRename}
+                disabled={renaming || renameDraft.trim().length === 0}
+                className="px-4 py-2 rounded-lg bg-aa-accent text-aa-bg text-sm font-semibold hover:bg-aa-accent/90 transition-colors disabled:opacity-40"
+              >
+                {renaming ? "Saving..." : "Save"}
               </button>
             </div>
           </div>

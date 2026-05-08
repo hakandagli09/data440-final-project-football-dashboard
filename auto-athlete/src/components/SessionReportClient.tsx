@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import PlayerSessionCard from "@/components/PlayerSessionCard";
-import ReportDateRangePicker from "@/components/ReportDateRangePicker";
+import DualMonthDatePicker from "@/components/DualMonthDatePicker";
 import type { SessionReportData } from "@/lib/session-report-queries";
 import { formatSessionDate, formatSessionDateUpper } from "@/lib/date-utils";
 
@@ -36,13 +36,14 @@ function TabButton({
 
 interface SessionReportClientProps {
   data: SessionReportData;
+  focusedPlayerId?: string | null;
 }
 
 /**
  * Client wrapper for the Session Report page. Handles date selection,
  * Offense/Defense toggling, practice-day override, and print/export UI.
  */
-export default function SessionReportClient({ data }: SessionReportClientProps) {
+export default function SessionReportClient({ data, focusedPlayerId = null }: SessionReportClientProps) {
   const router = useRouter();
   const [tab, setTab] = useState<SideTab>("both");
   // Practice-day override — defaults to the inferred session title so
@@ -71,6 +72,11 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
 
   const showOffense = tab === "both" || tab === "offense";
   const showDefense = tab === "both" || tab === "defense";
+  const focusedPlayerName = [
+    ...data.offense,
+    ...data.defense,
+    ...data.injuredRehab,
+  ].find((card) => card.playerId === focusedPlayerId)?.playerName;
 
   return (
     <div className="space-y-6">
@@ -103,64 +109,21 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
             >
               Print / PDF
             </button>
-            {/* Session-type filter — scopes the entire report (dates list,
-                daily/running totals, and the 4-week baseline) to a single
-                practice type so totals reflect like-for-like comparisons. */}
-            <div className="relative">
-              <select
-                value={data.currentSessionTitle ?? ""}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  // Preserve the active date window when changing
-                  // session type. Range mode keeps start+end; single
-                  // mode keeps the selected day. Without this, picking
-                  // a new title (or "All Sessions") would reset the
-                  // URL and silently bounce the user back to the
-                  // global latest day — losing the range they had set.
-                  const params = new URLSearchParams();
-                  if (data.mode === "range") {
-                    params.set("start", data.startDate);
-                    params.set("end", data.endDate);
-                  } else if (data.currentDate) {
-                    params.set("date", data.currentDate);
-                  }
-                  if (next) {
-                    params.set("session_title", next);
-                  }
-                  const qs = params.toString();
-                  router.replace(qs ? `/dashboard/reports?${qs}` : `/dashboard/reports`);
-                }}
-                className="appearance-none flex items-center gap-2 px-4 py-2 pr-8 rounded-lg border border-aa-border bg-aa-surface text-xs font-mono text-aa-text-secondary hover:border-aa-border-bright transition-colors cursor-pointer"
-              >
-                <option value="" className="bg-aa-surface text-aa-text">
-                  All Sessions
-                </option>
-                {data.availableSessionTitles.map((t) => (
-                  <option key={t} value={t} className="bg-aa-surface text-aa-text">
-                    {t}
-                  </option>
-                ))}
-              </select>
-              <svg
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-aa-text-dim pointer-events-none"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M6 12h12M9.75 17.25h4.5" />
-              </svg>
-            </div>
-            <ReportDateRangePicker
+            <DualMonthDatePicker
               startDate={data.startDate}
               endDate={data.endDate}
               availableDates={data.availableDates}
+              allowRange
+              showQuickSelects
               onSelectSingle={(d) => {
                 // Preserve the active session-title filter on every
                 // date change so the user doesn't have to re-pick the
                 // practice type after every navigation.
                 const params = new URLSearchParams();
                 params.set("date", d);
+                if (focusedPlayerId) {
+                  params.set("player", focusedPlayerId);
+                }
                 if (data.currentSessionTitle) {
                   params.set("session_title", data.currentSessionTitle);
                 }
@@ -170,6 +133,9 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
                 const params = new URLSearchParams();
                 params.set("start", start);
                 params.set("end", end);
+                if (focusedPlayerId) {
+                  params.set("player", focusedPlayerId);
+                }
                 if (data.currentSessionTitle) {
                   params.set("session_title", data.currentSessionTitle);
                 }
@@ -179,7 +145,85 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
           </div>
         </div>
 
-        <div className="mt-5 flex items-center flex-wrap gap-3">
+        {/* Session-type filter chips. Drives the `?session_title=` URL
+            param, which scopes every downstream aggregation: dates
+            list, daily/running totals, and the 4-week baseline. The
+            active chip's title becomes the *only* row type considered
+            for the % column — i.e. "Game" gives a Games-only baseline,
+            "Helmets" gives a Helmets-only baseline, etc. The "All"
+            chip clears the filter, which falls back to the per-player
+            auto-stratification on each row's same-day session_title. */}
+        <div className="mt-5 flex items-center flex-wrap gap-2">
+          {(() => {
+            // Canonical practice types come first, in coach-priority
+            // order; any extras present in the visible window (e.g.
+            // Linear Tempo, Max V, Accel) trail alphabetically so the
+            // chip row stays scannable.
+            const presets: readonly string[] = [
+              "Game",
+              "Practice",
+              "Full Pads",
+              "Shells",
+              "Helmets",
+            ];
+            const present: ReadonlySet<string> = new Set(data.availableSessionTitles);
+            const orderedTitles: string[] = [
+              ...presets.filter((t) => present.has(t)),
+              ...data.availableSessionTitles.filter((t) => !presets.includes(t)),
+            ];
+            /** Build the URL for a chip click while preserving the
+             *  active date window. Pass `null` for the "All" chip. */
+            const buildHref = (title: string | null): string => {
+              const params = new URLSearchParams();
+              if (data.mode === "range") {
+                params.set("start", data.startDate);
+                params.set("end", data.endDate);
+              } else if (data.currentDate) {
+                params.set("date", data.currentDate);
+              }
+              if (focusedPlayerId) params.set("player", focusedPlayerId);
+              if (title) params.set("session_title", title);
+              const qs = params.toString();
+              return qs ? `/dashboard/reports?${qs}` : `/dashboard/reports`;
+            };
+            const isActive = (title: string | null): boolean =>
+              (data.currentSessionTitle ?? null) === title;
+
+            const chipBase =
+              "px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider rounded border transition-colors";
+            const chipActive =
+              "bg-aa-accent text-aa-bg border-aa-accent";
+            const chipInactive =
+              "text-aa-text-secondary border-aa-border hover:border-aa-accent hover:text-aa-accent";
+
+            return (
+              <>
+                <button
+                  key="__all"
+                  type="button"
+                  onClick={() => router.replace(buildHref(null))}
+                  className={`${chipBase} ${isActive(null) ? chipActive : chipInactive}`}
+                >
+                  All
+                </button>
+                {orderedTitles.map((title) => (
+                  <button
+                    key={title}
+                    type="button"
+                    onClick={() => router.replace(buildHref(title))}
+                    className={`${chipBase} ${
+                      isActive(title) ? chipActive : chipInactive
+                    }`}
+                  >
+                    {title}
+                  </button>
+                ))}
+              </>
+            );
+          })()}
+        </div>
+
+        <div className="mt-3 flex items-center flex-wrap gap-3">
           <TabButton active={tab === "both"} onClick={() => setTab("both")}>Both</TabButton>
           <TabButton active={tab === "offense"} onClick={() => setTab("offense")}>Offense</TabButton>
           <TabButton active={tab === "defense"} onClick={() => setTab("defense")}>Defense</TabButton>
@@ -207,6 +251,16 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
             />
           </div>
         </div>
+
+        {focusedPlayerName && (
+          <div className="mt-4 rounded-lg border border-aa-accent/30 bg-aa-accent/10 px-4 py-3 text-sm text-aa-text-secondary">
+            Focused on <span className="font-semibold text-aa-text">{focusedPlayerName}</span> for{" "}
+            {data.mode === "range"
+              ? `${formatSessionDate(data.startDate)} → ${formatSessionDate(data.endDate)}`
+              : formatSessionDate(data.currentDate)}
+            . Their card is highlighted below.
+          </div>
+        )}
       </div>
 
       <ReportHeaderBanner
@@ -225,6 +279,8 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
           title="Offense"
           cards={data.offense}
           mode={data.mode}
+          reportDate={data.currentDate}
+          focusedPlayerId={focusedPlayerId}
           emptyMessage={
             data.mode === "range"
               ? "No offensive players with data in this range."
@@ -238,6 +294,8 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
           title="Defense"
           cards={data.defense}
           mode={data.mode}
+          reportDate={data.currentDate}
+          focusedPlayerId={focusedPlayerId}
           emptyMessage={
             data.mode === "range"
               ? "No defensive players with data in this range."
@@ -252,6 +310,8 @@ export default function SessionReportClient({ data }: SessionReportClientProps) 
           subtitle="Excluded from position averages"
           cards={data.injuredRehab}
           mode={data.mode}
+          reportDate={data.currentDate}
+          focusedPlayerId={focusedPlayerId}
           emptyMessage=""
           tone="warn"
         />
@@ -311,6 +371,8 @@ function ReportSection({
   subtitle,
   cards,
   mode,
+  reportDate,
+  focusedPlayerId,
   emptyMessage,
   tone,
 }: {
@@ -319,9 +381,19 @@ function ReportSection({
   cards: SessionReportData["offense"];
   /** Current report mode — controls whether cards show the Daily column. */
   mode: SessionReportData["mode"];
+  reportDate: string;
+  focusedPlayerId?: string | null;
   emptyMessage: string;
   tone?: "warn";
 }) {
+  const sortedCards = focusedPlayerId
+    ? [...cards].sort((a, b) => {
+        if (a.playerId === focusedPlayerId) return -1;
+        if (b.playerId === focusedPlayerId) return 1;
+        return a.playerName.localeCompare(b.playerName);
+      })
+    : cards;
+
   return (
     <section className="print:break-before-auto">
       <div className="flex items-baseline gap-3 mb-3">
@@ -346,8 +418,14 @@ function ReportSection({
         <p className="text-sm text-aa-text-dim italic">{emptyMessage}</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 print:grid-cols-2">
-          {cards.map((card) => (
-            <PlayerSessionCard key={card.playerId} card={card} mode={mode} />
+          {sortedCards.map((card) => (
+            <PlayerSessionCard
+              key={card.playerId}
+              card={card}
+              mode={mode}
+              reportDate={reportDate}
+              isFocused={card.playerId === focusedPlayerId}
+            />
           ))}
         </div>
       )}

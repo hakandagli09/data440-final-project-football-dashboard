@@ -12,6 +12,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { parseCsv, CsvType } from "@/lib/csv-parser";
 
+type UploadSeason = "spring" | "summer" | "fall";
+
 // Service role client — server-side only, never exposed to the browser.
 // Falls back to the anon key if service role key is not set (for development).
 const supabaseAdmin = createClient(
@@ -27,6 +29,10 @@ const TABLE_MAP: Record<CsvType, string> = {
   nordbord: "nordbord_tests",
 };
 
+function isUploadSeason(value: FormDataEntryValue | null): value is UploadSeason {
+  return value === "spring" || value === "summer" || value === "fall";
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -34,6 +40,13 @@ export async function POST(request: NextRequest) {
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    }
+    const season = formData.get("season");
+    if (!isUploadSeason(season)) {
+      return NextResponse.json(
+        { error: "Select a season before uploading: spring, summer, or fall." },
+        { status: 400 }
+      );
     }
 
     const csvText = await file.text();
@@ -48,7 +61,8 @@ export async function POST(request: NextRequest) {
       .from("uploads")
       .select("id, filename, uploaded_at, row_count")
       .eq("filename", file.name)
-      .eq("csv_type", csvType);
+      .eq("csv_type", csvType)
+      .eq("season", season);
 
     if (existingUploads && existingUploads.length > 0) {
       const prev = existingUploads[0];
@@ -101,6 +115,7 @@ export async function POST(request: NextRequest) {
       .insert({
         filename: file.name,
         csv_type: csvType,
+        season,
         row_count: rows.length,
         status: skippedRows.length > 0 ? "partial" : "success",
         error_detail: skippedRows.length > 0 ? { skippedRows } : null,

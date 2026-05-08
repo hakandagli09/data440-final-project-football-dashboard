@@ -12,6 +12,7 @@
 import type { Metadata } from "next";
 import { Bebas_Neue, Barlow, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { ThemeProvider, themeInitScript } from "@/lib/theme-context";
 
 /**
  * Bebas Neue — display / heading typeface.
@@ -71,21 +72,28 @@ interface RootLayoutProps {
  * RootLayout — the outermost server component wrapping every page.
  *
  * - `lang="en"` sets the document language for accessibility and SEO.
- * - `className="dark"` activates Tailwind's dark-mode variant on all descendants.
+ * - The inline `<script>` reads the persisted theme from localStorage
+ *   and applies `data-theme` to <html> *before* React hydrates, so the
+ *   first paint matches the user's last choice (no flash).
+ * - `className="dark"` is retained for legacy Tailwind `dark:` variants
+ *   but the actual color swap is driven by the CSS-variable system in
+ *   `globals.css`, keyed off the `data-theme` attribute.
  * - The three font CSS-variable classes (e.g. `bebas.variable`) inject
- *   `--font-bebas`, `--font-barlow`, and `--font-jetbrains` onto <body>,
- *   which Tailwind's `font-display`, `font-body`, and `font-mono` utilities consume.
- * - `antialiased` enables subpixel font rendering for sharper text.
- * - `bg-aa-bg` sets the near-black background (#07080a).
- * - `text-aa-text` sets the default foreground color (#e8eaed).
+ *   `--font-bebas`, `--font-barlow`, and `--font-jetbrains` onto <body>.
+ * - `bg-aa-bg` / `text-aa-text` now resolve through the variable system
+ *   and adapt to the active theme automatically.
  */
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="en" className="dark">
+      <head>
+        {/* FOUC guard — runs before paint to set the persisted theme. */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body
         className={`${bebas.variable} ${barlow.variable} ${jetbrains.variable} font-body antialiased bg-aa-bg text-aa-text`}
       >
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

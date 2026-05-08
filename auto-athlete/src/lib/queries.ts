@@ -9,6 +9,8 @@ import { supabaseServer as supabase } from "./supabase-server";
 import { subtractDays } from "./date-utils";
 import { getPositionGroup } from "./position-groups";
 import { fetchAllRows } from "./supabase-paginate";
+import { getPlayersList } from "@/lib/player-queries";
+import { getNormalizedHsr } from "@/lib/flagging";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -31,12 +33,17 @@ export interface SpeedZoneData {
 }
 
 export interface PlayerRow {
+  playerId: string;
   rank: number;
   name: string;
   pos: string;
   dist: string;
   spd: string;
   load: string;
+  hsr?: string;
+  sprint?: string;
+  accelDecel?: string;
+  explosive?: string;
 }
 
 export interface SessionInfoItem {
@@ -54,12 +61,40 @@ export interface DashboardData {
   kpis: KpiData[];
   speedZones: SpeedZoneData[];
   players: PlayerRow[];
+  lowPlayers: PlayerRow[];
+  positionGroups: PositionGroupSummary[];
+  sprintExposure: SprintExposureSummary;
   sessionInfo: SessionInfoItem[];
   acwr: AcwrResult;
   alertCount: number;
   sessionTitle: string;
   currentDate: string;
   availableDates: string[];
+}
+
+export interface PositionGroupSummary {
+  label: "Skills / Mids" | "Bigs" | "Other";
+  playerCount: number;
+  totalDistance: string;
+  hsr: string;
+  sprintDistance: string;
+  accelDecel: string;
+  dsl: string;
+}
+
+export interface SprintExposureSummary {
+  totalPlayers: number;
+  playersAt85: number;
+  playersAt90: number;
+  percentAt85: number;
+  percentAt90: number;
+  missing90: Array<{
+    playerId: string;
+    name: string;
+    position: string;
+    todayMaxSpeed: string;
+    pctOfMax: string;
+  }>;
 }
 
 type GroupFilter = "skills_mids" | "bigs";
@@ -126,6 +161,7 @@ type MetricRow = Record<string, unknown> & {
   total_distance?: number | null;
   max_speed?: number | null;
   high_speed_running?: number | null;
+  distance_zone_4_6?: number | null;
   dynamic_stress_load?: number | null;
   distance_zone_6?: number | null;
   collision_load?: number | null;
@@ -187,7 +223,7 @@ function getMetricValue(row: MetricRow, metric: ChatMetric): number {
     case "max_speed":
       return row.max_speed ?? 0;
     case "high_speed_running":
-      return row.high_speed_running ?? 0;
+      return getNormalizedHsr(row);
     case "dynamic_stress_load":
       return row.dynamic_stress_load ?? 0;
     case "distance_zone_6":
@@ -249,7 +285,7 @@ async function getMetricRowsForWindow(startDate: string, endDate: string): Promi
       supabase
         .from("gps_sessions")
         .select(
-          "player_id, session_date, session_title, total_distance, max_speed, high_speed_running, dynamic_stress_load, distance_zone_6, collision_load, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, players(name, position)"
+          "player_id, session_date, session_title, total_distance, max_speed, high_speed_running, distance_zone_4_6, dynamic_stress_load, distance_zone_6, collision_load, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, players(name, position)"
         )
         .gte("session_date", startDate)
         .lte("session_date", endDate)
@@ -273,6 +309,78 @@ function pctChange(current: number, previous: number): { change: string; changeT
 }
 
 // subtractDays imported from date-utils.ts
+
+type PlayerDayAggregate = {
+  playerId: string;
+  name: string;
+  position: string;
+  totalDistance: number;
+  topSpeed: number;
+  hsr: number;
+  sprintDistance: number;
+  dsl: number;
+  accelDecel: number;
+  explosiveEfforts: number;
+};
+
+function buildPlayerDayAggregates(rows: MetricRow[]): PlayerDayAggregate[] {
+  const playerMap = new Map<string, PlayerDayAggregate>();
+
+  for (const row of rows) {
+    const player = getMetricRowPlayer(row);
+    const existing = playerMap.get(row.player_id) ?? {
+      playerId: row.player_id,
+      name: player?.name ?? "Unknown",
+      position: player?.position ?? "—",
+      totalDistance: 0,
+      topSpeed: 0,
+      hsr: 0,
+      sprintDistance: 0,
+      dsl: 0,
+      accelDecel: 0,
+      explosiveEfforts: 0,
+    };
+
+    existing.totalDistance += row.total_distance ?? 0;
+    existing.topSpeed = Math.max(existing.topSpeed, row.max_speed ?? 0);
+    existing.hsr += getNormalizedHsr(row);
+    existing.sprintDistance += row.distance_zone_6 ?? 0;
+    existing.dsl += row.dynamic_stress_load ?? 0;
+    existing.accelDecel += (row.accelerations_zone_4_6 ?? 0) + (row.decelerations_zone_4_6 ?? 0);
+    existing.explosiveEfforts += row.hml_efforts ?? 0;
+
+    playerMap.set(row.player_id, existing);
+  }
+
+  return Array.from(playerMap.values());
+}
+
+function aggregateKpisFromPlayers(players: PlayerDayAggregate[]) {
+  return {
+    totalDistance: sum(players.map((player) => player.totalDistance)),
+    topSpeed: Math.max(...(players.length > 0 ? players.map((player) => player.topSpeed) : [0])),
+    hsr: sum(players.map((player) => player.hsr)),
+    sprintDist: sum(players.map((player) => player.sprintDistance)),
+    accelDecel: sum(players.map((player) => player.accelDecel)),
+    explosiveEfforts: sum(players.map((player) => player.explosiveEfforts)),
+  };
+}
+
+function playerToRow(player: PlayerDayAggregate, rank: number): PlayerRow {
+  return {
+    playerId: player.playerId,
+    rank,
+    name: player.name,
+    pos: player.position,
+    dist: formatNum(player.totalDistance),
+    spd: player.topSpeed.toFixed(1),
+    load: formatNum(player.dsl),
+    hsr: formatNum(player.hsr),
+    sprint: formatNum(player.sprintDistance),
+    accelDecel: formatNum(player.accelDecel),
+    explosive: formatNum(player.explosiveEfforts),
+  };
+}
 
 // ─── Queries ──────────────────────────────────────────────────────────────
 
@@ -325,21 +433,6 @@ async function getPreviousSessionRows(currentDate: string) {
   return rows.length > 0 ? rows : null;
 }
 
-/** Aggregate session rows into KPI values. */
-function aggregateKpis(rows: Record<string, unknown>[]) {
-  const vals = (col: string) =>
-    rows.map((r) => r[col] as number | null).filter((v): v is number => v != null);
-
-  return {
-    totalDistance: avg(vals("total_distance")),
-    topSpeed: Math.max(...(vals("max_speed").length > 0 ? vals("max_speed") : [0])),
-    hsr: avg(vals("high_speed_running")),
-    dsl: avg(vals("dynamic_stress_load")),
-    sprintDist: avg(vals("distance_zone_5").map((v, i) => v + (vals("distance_zone_6")[i] ?? 0))),
-    metabolicPower: avg(vals("total_metabolic_power")),
-  };
-}
-
 /** Get sparkline data: team averages for the last N sessions. */
 async function getSparklineHistory(
   currentDate: string,
@@ -356,30 +449,27 @@ async function getSparklineHistory(
     totalDistance: [],
     topSpeed: [],
     hsr: [],
-    dsl: [],
     sprintDist: [],
-    metabolicPower: [],
+    accelDecel: [],
+    explosiveEfforts: [],
   };
 
   for (const d of sparkDates) {
     const { data } = await supabase
       .from("gps_sessions")
-      .select("total_distance, max_speed, high_speed_running, dynamic_stress_load, distance_zone_5, distance_zone_6, total_metabolic_power")
+      .select("player_id, session_date, total_distance, max_speed, high_speed_running, distance_zone_4_6, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, players(name, position)")
       .eq("session_date", d);
 
     if (!data || data.length === 0) continue;
+    const dailyPlayers = buildPlayerDayAggregates((data as unknown) as MetricRow[]);
+    const totals = aggregateKpisFromPlayers(dailyPlayers);
 
-    const vals = (col: string) =>
-      data.map((r) => (r as Record<string, unknown>)[col] as number | null).filter((v): v is number => v != null);
-
-    sparklines.totalDistance.push(avg(vals("total_distance")));
-    sparklines.topSpeed.push(Math.max(...(vals("max_speed").length > 0 ? vals("max_speed") : [0])));
-    sparklines.hsr.push(avg(vals("high_speed_running")));
-    sparklines.dsl.push(avg(vals("dynamic_stress_load")));
-    const z5 = vals("distance_zone_5");
-    const z6 = vals("distance_zone_6");
-    sparklines.sprintDist.push(avg(z5.map((v, i) => v + (z6[i] ?? 0))));
-    sparklines.metabolicPower.push(avg(vals("total_metabolic_power")));
+    sparklines.totalDistance.push(totals.totalDistance);
+    sparklines.topSpeed.push(totals.topSpeed);
+    sparklines.hsr.push(totals.hsr);
+    sparklines.sprintDist.push(totals.sprintDist);
+    sparklines.accelDecel.push(totals.accelDecel);
+    sparklines.explosiveEfforts.push(totals.explosiveEfforts);
   }
 
   return sparklines;
@@ -475,6 +565,16 @@ export async function getDashboardData(date?: string): Promise<DashboardData> {
       kpis: [],
       speedZones: [],
       players: [],
+      lowPlayers: [],
+      positionGroups: [],
+      sprintExposure: {
+        totalPlayers: 0,
+        playersAt85: 0,
+        playersAt90: 0,
+        percentAt85: 0,
+        percentAt90: 0,
+        missing90: [],
+      },
       sessionInfo: [],
       acwr: { ratio: null, label: "No data", riskyPlayers: 0 },
       alertCount: 0,
@@ -484,32 +584,38 @@ export async function getDashboardData(date?: string): Promise<DashboardData> {
     };
   }
 
-  // Fetch current session data + previous session + sparklines + ACWR in parallel
-  const [rows, prevRows, sparklines, acwr] = await Promise.all([
+  // Fetch current session data + previous session + sparklines + readiness flags in parallel.
+  const historyStart = `${currentDate.slice(0, 4)}-01-01`;
+  const [rows, prevRows, sparklines, acwr, rosterPlayers, historyRows] = await Promise.all([
     getSessionGpsRows(currentDate),
     getPreviousSessionRows(currentDate),
     getSparklineHistory(currentDate),
     computeAcwr(currentDate),
+    getPlayersList(),
+    getMetricRowsForWindow(historyStart, currentDate),
   ]);
 
   // ── KPIs ──
-  const current = aggregateKpis(rows);
-  const previous = prevRows ? aggregateKpis(prevRows) : null;
+  const typedRows = (rows as unknown) as MetricRow[];
+  const playerAggregates = buildPlayerDayAggregates(typedRows);
+  const prevAggregates = prevRows ? buildPlayerDayAggregates((prevRows as unknown) as MetricRow[]) : null;
+  const current = aggregateKpisFromPlayers(playerAggregates);
+  const previous = prevAggregates ? aggregateKpisFromPlayers(prevAggregates) : null;
 
   const kpiDefs: {
     title: string;
-    key: keyof ReturnType<typeof aggregateKpis>;
+    key: keyof ReturnType<typeof aggregateKpisFromPlayers>;
     unit: string;
     decimals: number;
     accent: string;
     icon: KpiData["icon"];
   }[] = [
     { title: "Total Distance", key: "totalDistance", unit: "yd", decimals: 0, accent: "aa-accent", icon: "distance" },
-    { title: "Top Speed", key: "topSpeed", unit: "mph", decimals: 1, accent: "aa-warm", icon: "speed" },
-    { title: "HSR Distance", key: "hsr", unit: "yd", decimals: 0, accent: "aa-accent", icon: "hsr" },
-    { title: "Player Load", key: "dsl", unit: "AU", decimals: 0, accent: "aa-accent", icon: "load" },
+    { title: "HSR", key: "hsr", unit: "yd", decimals: 0, accent: "aa-accent", icon: "hsr" },
     { title: "Sprint Distance", key: "sprintDist", unit: "yd", decimals: 0, accent: "aa-warm", icon: "sprint" },
-    { title: "Metabolic Power", key: "metabolicPower", unit: "W", decimals: 0, accent: "aa-accent", icon: "metabolic" },
+    { title: "Max Velocity", key: "topSpeed", unit: "mph", decimals: 1, accent: "aa-warm", icon: "speed" },
+    { title: "Accel / Decel", key: "accelDecel", unit: "", decimals: 0, accent: "aa-danger", icon: "load" },
+    { title: "Explosive Efforts", key: "explosiveEfforts", unit: "", decimals: 0, accent: "aa-accent", icon: "metabolic" },
   ];
 
   const kpis: KpiData[] = kpiDefs.map((def) => {
@@ -521,9 +627,9 @@ export async function getDashboardData(date?: string): Promise<DashboardData> {
     const sparklineKey = def.key === "totalDistance" ? "totalDistance"
       : def.key === "topSpeed" ? "topSpeed"
       : def.key === "hsr" ? "hsr"
-      : def.key === "dsl" ? "dsl"
       : def.key === "sprintDist" ? "sprintDist"
-      : "metabolicPower";
+      : def.key === "accelDecel" ? "accelDecel"
+      : "explosiveEfforts";
 
     return {
       title: def.title,
@@ -560,47 +666,71 @@ export async function getDashboardData(date?: string): Promise<DashboardData> {
     pct: zoneTotal > 0 ? Math.round((zoneSums[5 - i] / zoneTotal) * 100) : 0,
   }));
 
-  // ── Player Leaderboard ──
-  type GpsRow = Record<string, unknown> & {
-    players: { name: string; position: string } | null;
-  };
-  const typedRows = rows as GpsRow[];
-
-  const playerMap = new Map<string, { name: string; pos: string; dist: number; spd: number; load: number }>();
-
-  for (const row of typedRows) {
-    const pid = row.player_id as string;
-    const existing = playerMap.get(pid);
-    const dist = (row.total_distance as number) ?? 0;
-    const spd = (row.max_speed as number) ?? 0;
-    const load = (row.dynamic_stress_load as number) ?? 0;
-
-    if (existing) {
-      existing.dist += dist;
-      existing.spd = Math.max(existing.spd, spd);
-      existing.load += load;
-    } else {
-      playerMap.set(pid, {
-        name: row.players?.name ?? "Unknown",
-        pos: row.players?.position ?? "—",
-        dist,
-        spd,
-        load,
-      });
-    }
-  }
-
-  const players: PlayerRow[] = Array.from(playerMap.values())
-    .sort((a, b) => b.dist - a.dist)
+  // ── Team Report Sections ──
+  const players: PlayerRow[] = [...playerAggregates]
+    .sort((a, b) => b.totalDistance - a.totalDistance)
     .slice(0, 5)
-    .map((p, i) => ({
-      rank: i + 1,
-      name: p.name,
-      pos: p.pos,
-      dist: formatNum(p.dist),
-      spd: p.spd.toFixed(1),
-      load: formatNum(p.load),
-    }));
+    .map(playerToRow);
+
+  const lowPlayers: PlayerRow[] = [...playerAggregates]
+    .filter((player) => player.totalDistance > 0)
+    .sort((a, b) => a.totalDistance - b.totalDistance)
+    .slice(0, 5)
+    .map(playerToRow);
+
+  const groupLabels: Record<"skills_mids" | "bigs" | "other", PositionGroupSummary["label"]> = {
+    skills_mids: "Skills / Mids",
+    bigs: "Bigs",
+    other: "Other",
+  };
+  const positionGroups: PositionGroupSummary[] = (["skills_mids", "bigs", "other"] as const)
+    .map((group) => {
+      const groupPlayers = playerAggregates.filter((player) => getPositionGroup(player.position) === group);
+      const totals = aggregateKpisFromPlayers(groupPlayers);
+      return {
+        label: groupLabels[group],
+        playerCount: groupPlayers.length,
+        totalDistance: formatNum(totals.totalDistance),
+        hsr: formatNum(totals.hsr),
+        sprintDistance: formatNum(totals.sprintDist),
+        accelDecel: formatNum(totals.accelDecel),
+        dsl: formatNum(sum(groupPlayers.map((player) => player.dsl))),
+      };
+    })
+    .filter((group) => group.playerCount > 0);
+
+  const topSpeedByPlayer = new Map<string, number>();
+  for (const row of historyRows) {
+    topSpeedByPlayer.set(
+      row.player_id,
+      Math.max(topSpeedByPlayer.get(row.player_id) ?? 0, row.max_speed ?? 0)
+    );
+  }
+  const sprintRows = playerAggregates.map((player) => {
+    const baselineMax = topSpeedByPlayer.get(player.playerId) ?? player.topSpeed;
+    const pctOfMax = baselineMax > 0 ? (player.topSpeed / baselineMax) * 100 : 0;
+    return { player, pctOfMax };
+  });
+  const playersAt85 = sprintRows.filter((row) => row.pctOfMax >= 85).length;
+  const playersAt90 = sprintRows.filter((row) => row.pctOfMax >= 90).length;
+  const sprintExposure: SprintExposureSummary = {
+    totalPlayers: playerAggregates.length,
+    playersAt85,
+    playersAt90,
+    percentAt85: playerAggregates.length > 0 ? Math.round((playersAt85 / playerAggregates.length) * 100) : 0,
+    percentAt90: playerAggregates.length > 0 ? Math.round((playersAt90 / playerAggregates.length) * 100) : 0,
+    missing90: sprintRows
+      .filter((row) => row.pctOfMax < 90)
+      .sort((a, b) => a.pctOfMax - b.pctOfMax)
+      .slice(0, 5)
+      .map(({ player, pctOfMax }) => ({
+        playerId: player.playerId,
+        name: player.name,
+        position: player.position,
+        todayMaxSpeed: player.topSpeed.toFixed(1),
+        pctOfMax: `${pctOfMax.toFixed(0)}%`,
+      })),
+  };
 
   // ── Session Info ──
   const sessionTitle = (rows[0]?.session_title as string) ?? "Session";
@@ -639,9 +769,12 @@ export async function getDashboardData(date?: string): Promise<DashboardData> {
     kpis,
     speedZones,
     players,
+    lowPlayers,
+    positionGroups,
+    sprintExposure,
     sessionInfo,
     acwr,
-    alertCount: acwr.riskyPlayers,
+    alertCount: rosterPlayers.filter((player) => player.flags.length > 0).length,
     sessionTitle,
     currentDate,
     availableDates,

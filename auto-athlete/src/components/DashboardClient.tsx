@@ -61,6 +61,30 @@ interface DashboardClientProps {
   kpis: KpiData[];
   speedZones: SpeedZoneData[];
   players: PlayerRow[];
+  lowPlayers: PlayerRow[];
+  positionGroups: {
+    label: "Skills / Mids" | "Bigs" | "Other";
+    playerCount: number;
+    totalDistance: string;
+    hsr: string;
+    sprintDistance: string;
+    accelDecel: string;
+    dsl: string;
+  }[];
+  sprintExposure: {
+    totalPlayers: number;
+    playersAt85: number;
+    playersAt90: number;
+    percentAt85: number;
+    percentAt90: number;
+    missing90: Array<{
+      playerId: string;
+      name: string;
+      position: string;
+      todayMaxSpeed: string;
+      pctOfMax: string;
+    }>;
+  };
   sessionInfo: SessionInfoItem[];
   acwr: AcwrResult;
   alertCount: number;
@@ -75,6 +99,9 @@ export default function DashboardClient({
   kpis,
   speedZones,
   players,
+  lowPlayers,
+  positionGroups,
+  sprintExposure,
   sessionInfo,
   acwr,
   alertCount,
@@ -113,13 +140,13 @@ export default function DashboardClient({
   return (
     <div className="space-y-6">
       {/* ── Page header ────────────────────────────────────── */}
-      <div className="flex items-end justify-between opacity-0 animate-fade-in">
+      <div className="relative z-50 flex items-end justify-between opacity-0 animate-fade-in">
         <div>
           <h1 className="font-display text-[42px] leading-none tracking-[0.04em] text-aa-text">
-            PERFORMANCE OVERVIEW
+            TEAM DAILY REPORT
           </h1>
           <p className="mt-1 text-sm text-aa-text-secondary">
-            {sessionTitle} — {formatDate(currentDate)}
+            {sessionTitle} — {formatDate(currentDate)} · Team-level practice briefing
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -131,7 +158,7 @@ export default function DashboardClient({
       </div>
 
       {/* ── KPI Cards Row ──────────────────────────────────── */}
-      <div className="grid grid-cols-6 gap-4">
+      <div className="relative z-0 grid grid-cols-6 gap-4">
         {kpis.map((kpi, i) => (
           <KPICard
             key={kpi.title}
@@ -151,66 +178,44 @@ export default function DashboardClient({
       {/* ── Main content grid ──────────────────────────────── */}
       <div className="grid grid-cols-12 gap-4">
 
-        {/* ── Distance Over Time — placeholder chart ────── */}
+        {/* ── Position Group Breakdown ──────────────────── */}
         <div className="col-span-8 bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "500ms" }}>
           <div className="flex items-center justify-between mb-5">
             <div>
               <h3 className="font-display text-xl tracking-[0.06em] text-aa-text">
-                DISTANCE OVER TIME
+                POSITION GROUP BREAKDOWN
               </h3>
-              <p className="text-xs text-aa-text-dim mt-0.5">Session timeline — all players</p>
-            </div>
-            <div className="flex gap-1">
-              {["1H", "2H", "Full"].map((label) => (
-                <button
-                  key={label}
-                  className={`px-3 py-1 rounded text-[10px] font-bold tracking-wider transition-colors ${
-                    label === "Full"
-                      ? "bg-aa-accent/15 text-aa-accent border border-aa-accent/20"
-                      : "text-aa-text-dim hover:text-aa-text border border-transparent hover:border-aa-border"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+              <p className="text-xs text-aa-text-dim mt-0.5">Team totals by group for the selected day</p>
             </div>
           </div>
 
-          <div className="h-[260px] relative overflow-hidden rounded-lg bg-aa-bg/50 border border-aa-border/50">
-            <div className="absolute inset-0 flex flex-col justify-between py-4 px-4">
-              {[0, 1, 2, 3, 4].map((i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <span className="text-[10px] font-mono text-aa-text-dim w-8 text-right">
-                    {(5000 - i * 1250).toLocaleString()}
-                  </span>
-                  <div className="flex-1 border-t border-aa-border/30 border-dashed" />
-                </div>
-              ))}
-            </div>
-            <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
-              <defs>
-                <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#00f0ff" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="#00f0ff" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M0,200 C60,190 80,170 120,155 C160,140 200,110 260,95 C320,80 360,85 420,70 C480,55 520,40 580,35 C640,30 680,32 740,28 C800,24 840,20 900,18 L900,260 L0,260 Z"
-                fill="url(#areaGrad)"
-              />
-              <path
-                d="M0,200 C60,190 80,170 120,155 C160,140 200,110 260,95 C320,80 360,85 420,70 C480,55 520,40 580,35 C640,30 680,32 740,28 C800,24 840,20 900,18"
-                fill="none"
-                stroke="#00f0ff"
-                strokeWidth="2"
-                opacity="0.8"
-              />
-            </svg>
-            <div className="absolute bottom-3 left-12 right-4 flex justify-between">
-              {["0'", "15'", "30'", "45'", "60'", "75'", "90'"].map((t) => (
-                <span key={t} className="text-[10px] font-mono text-aa-text-dim">{t}</span>
-              ))}
-            </div>
+          <div className="overflow-hidden rounded-lg border border-aa-border/50">
+            <table className="w-full text-xs">
+              <thead className="bg-aa-bg/60 text-[10px] uppercase tracking-wider text-aa-text-dim">
+                <tr>
+                  <th className="px-3 py-2 text-left">Group</th>
+                  <th className="px-3 py-2 text-right">Players</th>
+                  <th className="px-3 py-2 text-right">Distance</th>
+                  <th className="px-3 py-2 text-right">HSR</th>
+                  <th className="px-3 py-2 text-right">Sprint</th>
+                  <th className="px-3 py-2 text-right">Accel/Decel</th>
+                  <th className="px-3 py-2 text-right">DSL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {positionGroups.map((group) => (
+                  <tr key={group.label} className="border-t border-aa-border/40">
+                    <td className="px-3 py-3 font-semibold text-aa-text">{group.label}</td>
+                    <td className="px-3 py-3 text-right font-mono text-aa-text-secondary">{group.playerCount}</td>
+                    <td className="px-3 py-3 text-right font-mono text-aa-text">{group.totalDistance} yd</td>
+                    <td className="px-3 py-3 text-right font-mono text-aa-text">{group.hsr} yd</td>
+                    <td className="px-3 py-3 text-right font-mono text-aa-text">{group.sprintDistance} yd</td>
+                    <td className="px-3 py-3 text-right font-mono text-aa-text">{group.accelDecel}</td>
+                    <td className="px-3 py-3 text-right font-mono text-aa-text">{group.dsl}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -255,20 +260,55 @@ export default function DashboardClient({
           </div>
         </div>
 
-        {/* ── Player Leaderboard ────────────────────────────── */}
+        {/* ── Sprint Exposure ───────────────────────────────── */}
         <div className="col-span-5 bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "700ms" }}>
+          <h3 className="font-display text-xl tracking-[0.06em] text-aa-text mb-1">
+            SPRINT EXPOSURE
+          </h3>
+          <p className="text-xs text-aa-text-dim mb-5">Players who reached 85% / 90% of their recorded max</p>
+          <div className="grid grid-cols-2 gap-3">
+            <ExposureCard label="85%+" value={sprintExposure.playersAt85} pct={sprintExposure.percentAt85} total={sprintExposure.totalPlayers} tone="text-aa-warm" />
+            <ExposureCard label="90%+" value={sprintExposure.playersAt90} pct={sprintExposure.percentAt90} total={sprintExposure.totalPlayers} tone="text-aa-success" />
+          </div>
+          <div className="mt-5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-aa-text-dim mb-2">
+              Furthest from 90%
+            </p>
+            <div className="space-y-2">
+              {sprintExposure.missing90.length === 0 ? (
+                <p className="text-xs text-aa-success">Every tracked player reached 90% today.</p>
+              ) : (
+                sprintExposure.missing90.map((player) => (
+                  <Link
+                    key={player.playerId}
+                    href={`/dashboard/reports?date=${currentDate}&player=${player.playerId}`}
+                    className="flex items-center justify-between rounded-lg border border-aa-border/40 bg-aa-bg/40 px-3 py-2 text-xs hover:border-aa-accent/40"
+                  >
+                    <span className="font-semibold text-aa-text">{player.name}</span>
+                    <span className="font-mono text-aa-text-secondary">
+                      {player.pctOfMax} · {player.todayMaxSpeed} mph
+                    </span>
+                  </Link>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Player Leaderboard ────────────────────────────── */}
+        <div className="col-span-4 bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "800ms" }}>
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="font-display text-xl tracking-[0.06em] text-aa-text">
-                PLAYER LEADERBOARD
+                TOP WORKLOAD
               </h3>
-              <p className="text-xs text-aa-text-dim mt-0.5">Top performers — Total Distance</p>
+              <p className="text-xs text-aa-text-dim mt-0.5">Highest total distance today</p>
             </div>
             <Link
-              href="/dashboard/players"
+              href={`/dashboard/reports?date=${currentDate}`}
               className="text-[10px] font-semibold tracking-wider text-aa-accent hover:text-aa-accent/80 transition-colors uppercase"
             >
-              View All →
+              Report →
             </Link>
           </div>
           <div className="overflow-hidden rounded-lg border border-aa-border/50">
@@ -278,8 +318,7 @@ export default function DashboardClient({
                   <th className="text-left text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">#</th>
                   <th className="text-left text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">Player</th>
                   <th className="text-right text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">Dist (yd)</th>
-                  <th className="text-right text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">Top Spd</th>
-                  <th className="text-right text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">Load</th>
+                  <th className="text-right text-[10px] font-bold tracking-wider uppercase text-aa-text-dim px-4 py-2.5">HSR</th>
                 </tr>
               </thead>
               <tbody>
@@ -303,12 +342,16 @@ export default function DashboardClient({
                         }`}>
                           {p.pos}
                         </div>
-                        <span className="text-sm font-semibold text-aa-text">{p.name}</span>
+                        <Link
+                          href={`/dashboard/reports?date=${currentDate}&player=${p.playerId}`}
+                          className="text-sm font-semibold text-aa-text hover:text-aa-accent"
+                        >
+                          {p.name}
+                        </Link>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-sm text-aa-text tabular-nums">{p.dist}</td>
-                    <td className="px-4 py-3 text-right font-mono text-sm text-aa-text tabular-nums">{p.spd}</td>
-                    <td className="px-4 py-3 text-right font-mono text-sm text-aa-text tabular-nums">{p.load}</td>
+                    <td className="px-4 py-3 text-right font-mono text-sm text-aa-text tabular-nums">{p.hsr}</td>
                   </tr>
                 ))}
               </tbody>
@@ -316,8 +359,34 @@ export default function DashboardClient({
           </div>
         </div>
 
+        {/* ── Low Output Watch ──────────────────────────────── */}
+        <div className="col-span-4 bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "900ms" }}>
+          <h3 className="font-display text-xl tracking-[0.06em] text-aa-text mb-1">
+            LOW OUTPUT WATCH
+          </h3>
+          <p className="text-xs text-aa-text-dim mb-4">Lowest total distance among tracked players</p>
+          <div className="space-y-2">
+            {lowPlayers.map((player) => (
+              <Link
+                key={player.playerId}
+                href={`/dashboard/reports?date=${currentDate}&player=${player.playerId}`}
+                className="flex items-center justify-between rounded-lg border border-aa-border/40 bg-aa-bg/40 px-3 py-2 hover:border-aa-accent/40"
+              >
+                <div>
+                  <p className="text-sm font-semibold text-aa-text">{player.name}</p>
+                  <p className="text-[10px] font-mono text-aa-text-dim">{player.pos}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-mono text-aa-text">{player.dist} yd</p>
+                  <p className="text-[10px] font-mono text-aa-text-dim">{player.spd} mph</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+
         {/* ── Acute:Chronic Workload Ratio ──────────────────── */}
-        <div className="col-span-4 bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "800ms" }}>
+        <div className="col-span-5 bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "1000ms" }}>
           <h3 className="font-display text-xl tracking-[0.06em] text-aa-text mb-1">
             ACUTE : CHRONIC
           </h3>
@@ -326,14 +395,20 @@ export default function DashboardClient({
           <div className="flex items-center justify-center py-6">
             <div className="relative w-40 h-40">
               <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
-                <circle cx="60" cy="60" r="50" fill="none" stroke="#1e2231" strokeWidth="10" />
+                <circle cx="60" cy="60" r="50" fill="none" stroke="rgb(var(--aa-border))" strokeWidth="10" />
                 {acwr.ratio !== null && (
                   <circle
                     cx="60"
                     cy="60"
                     r="50"
                     fill="none"
-                    stroke={acwr.ratio > 1.5 ? "#ff1744" : acwr.ratio > 1.3 ? "#ffab00" : "#00f0ff"}
+                    stroke={
+                      acwr.ratio > 1.5
+                        ? "rgb(var(--aa-danger))"
+                        : acwr.ratio > 1.3
+                        ? "rgb(var(--aa-warning))"
+                        : "rgb(var(--aa-accent))"
+                    }
                     strokeWidth="10"
                     strokeDasharray={`${Math.min(acwr.ratio, 2) / 2 * 314} ${314}`}
                     strokeLinecap="round"
@@ -370,7 +445,7 @@ export default function DashboardClient({
 
         {/* ── Session Info + Alert ──────────────────────────── */}
         <div className="col-span-3 space-y-4">
-          <div className="bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "900ms" }}>
+          <div className="bg-aa-surface border border-aa-border rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "1100ms" }}>
             <h3 className="font-display text-lg tracking-[0.06em] text-aa-text mb-3">
               SESSION INFO
             </h3>
@@ -384,7 +459,7 @@ export default function DashboardClient({
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-aa-accent/5 to-transparent border border-aa-accent/10 rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "1000ms" }}>
+          <div className="bg-gradient-to-br from-aa-accent/5 to-transparent border border-aa-accent/10 rounded-xl p-5 opacity-0 animate-slide-up" style={{ animationDelay: "1200ms" }}>
             <div className="flex items-center gap-2 mb-2">
               <svg className="w-4 h-4 text-aa-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
@@ -395,14 +470,43 @@ export default function DashboardClient({
               {alertCount > 0 ? (
                 <>
                   <strong className="text-aa-text">{alertCount} player{alertCount !== 1 ? "s" : ""}</strong>{" "}
-                  exceeded their 28-day workload ceiling during this session. Review flagged athletes before next practice.
+                  have active readiness flags. Review sprint exposure, GPS load, and CMJ changes before next practice.
                 </>
               ) : (
-                <>All players within normal workload ranges for this session.</>
+                <>No active readiness flags for the current roster.</>
               )}
             </p>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ExposureCard({
+  label,
+  value,
+  pct,
+  total,
+  tone,
+}: {
+  label: string;
+  value: number;
+  pct: number;
+  total: number;
+  tone: string;
+}): JSX.Element {
+  return (
+    <div className="rounded-lg border border-aa-border/50 bg-aa-bg/50 p-4">
+      <div className="flex items-start justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-aa-text-dim">{label}</p>
+        <p className={`font-display text-3xl leading-none ${tone}`}>{pct}%</p>
+      </div>
+      <p className="mt-2 text-xs font-mono text-aa-text-secondary">
+        {value} of {total} players
+      </p>
+      <div className="mt-3 h-2 rounded-full bg-aa-elevated overflow-hidden">
+        <div className="h-full rounded-full bg-aa-accent" style={{ width: `${pct}%` }} />
       </div>
     </div>
   );

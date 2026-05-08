@@ -9,11 +9,16 @@ const supabaseAdmin = createClient(
 );
 
 const ALLOWED_STATUSES: PlayerStatus[] = [
+  "modified_load",
   "injured",
   "rehab",
   "return_to_play",
   "cleared",
 ];
+
+function isIsoDate(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
 
 export async function POST(
   request: NextRequest,
@@ -21,7 +26,12 @@ export async function POST(
 ) {
   try {
     const { id: playerId } = await params;
-    const body = (await request.json()) as { status?: PlayerStatus };
+    const body = (await request.json()) as {
+      status?: PlayerStatus;
+      injuryDate?: unknown;
+      expectedReturn?: unknown;
+      notes?: unknown;
+    };
     const status = body.status;
 
     if (!status || !ALLOWED_STATUSES.includes(status)) {
@@ -30,42 +40,32 @@ export async function POST(
 
     const now = new Date().toISOString();
     const today = now.slice(0, 10);
+    const injuryDate = isIsoDate(body.injuryDate) ? body.injuryDate : today;
+    const expectedReturn = isIsoDate(body.expectedReturn)
+      ? body.expectedReturn
+      : status === "modified_load"
+        ? injuryDate
+        : null;
+    const notes = typeof body.notes === "string" && body.notes.trim().length > 0
+      ? body.notes.trim().slice(0, 500)
+      : null;
 
-    const { data: latest } = await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from("injuries")
-      .select("id")
-      .eq("player_id", playerId)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .insert({
+        player_id: playerId,
+        injury_date: injuryDate,
+        status,
+        expected_return: expectedReturn,
+        notes,
+        updated_at: now,
+      });
 
-    if (latest?.id) {
-      const { error } = await supabaseAdmin
-        .from("injuries")
-        .update({
-          status,
-          updated_at: now,
-        })
-        .eq("id", latest.id);
-
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
-    } else {
-      const { error } = await supabaseAdmin
-        .from("injuries")
-        .insert({
-          player_id: playerId,
-          injury_date: today,
-          status,
-          updated_at: now,
-        });
-
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    revalidatePath("/dashboard");
     revalidatePath("/dashboard/players");
     revalidatePath(`/dashboard/players/${playerId}`);
 

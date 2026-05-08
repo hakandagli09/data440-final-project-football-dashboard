@@ -10,6 +10,7 @@ import {
 import { getPositionGroup, type PositionGroup } from "@/lib/position-groups";
 import { supabaseServer as supabase } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/supabase-paginate";
+import { getNormalizedHsr } from "@/lib/flagging";
 
 type GroupFilter = Extract<PositionGroup, "skills_mids" | "bigs">;
 
@@ -80,6 +81,7 @@ type GpsSessionRow = {
   session_date: string;
   total_distance: number | null;
   high_speed_running: number | null;
+  distance_zone_4_6: number | null;
   distance_zone_6: number | null;
   accelerations_zone_4_6: number | null;
   decelerations_zone_4_6: number | null;
@@ -186,6 +188,7 @@ export async function getPositionReportData(selectedDate?: string): Promise<Posi
     player_id: string;
     session_date: string;
     high_speed_running: number | null;
+    distance_zone_4_6: number | null;
     distance_zone_6: number | null;
     accelerations_zone_4_6: number | null;
     decelerations_zone_4_6: number | null;
@@ -203,18 +206,18 @@ export async function getPositionReportData(selectedDate?: string): Promise<Posi
     supabase.from("players").select("id, name, position"),
     supabase
       .from("gps_sessions")
-      .select("player_id, session_date, total_distance, high_speed_running, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, dynamic_stress_load, hml_distance, hmld_per_minute, max_speed, pct_max_speed, hml_efforts, lower_speed_loading, collision_load")
+        .select("player_id, session_date, total_distance, high_speed_running, distance_zone_4_6, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, dynamic_stress_load, hml_distance, hmld_per_minute, max_speed, pct_max_speed, hml_efforts, lower_speed_loading, collision_load")
       .eq("session_date", currentDate),
     fetchAllRows<HistoryRow>(() =>
       supabase
         .from("gps_sessions")
-        .select("player_id, session_date, high_speed_running, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, max_speed")
+        .select("player_id, session_date, high_speed_running, distance_zone_4_6, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, hml_efforts, max_speed")
         .lte("session_date", currentDate)
     ),
     fetchAllRows<GpsSessionRow>(() =>
       supabase
         .from("gps_sessions")
-        .select("player_id, session_date, total_distance, high_speed_running, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, dynamic_stress_load, hml_efforts, lower_speed_loading, collision_load")
+        .select("player_id, session_date, total_distance, high_speed_running, distance_zone_4_6, distance_zone_6, accelerations_zone_4_6, decelerations_zone_4_6, dynamic_stress_load, hml_efforts, lower_speed_loading, collision_load")
         .gte("session_date", weekStart)
         .lte("session_date", weekEnd)
     ),
@@ -275,7 +278,7 @@ export async function getPositionReportData(selectedDate?: string): Promise<Posi
     };
 
     existing.totalDistance += valueOrZero(row.total_distance);
-    existing.hsr += valueOrZero(row.high_speed_running);
+    existing.hsr += getNormalizedHsr(row);
     existing.zone6SprintDistance += valueOrZero(row.distance_zone_6);
     existing.accel46 += valueOrZero(row.accelerations_zone_4_6);
     existing.decel46 += valueOrZero(row.decelerations_zone_4_6);
@@ -306,7 +309,7 @@ export async function getPositionReportData(selectedDate?: string): Promise<Posi
     row.pctMaxVelocity = computePctMaxVelocity(row.maxVelocity, topSpeed);
     row.hsbi = computeHsbi(row.decel46, row.maxVelocity);
     row.momentum = computeMomentum(weights.get(row.playerId) ?? null, weeklyTopSpeed);
-    row.ewmaHsr = getLatestEwmaValue(history, row.playerId, (item) => valueOrZero(item.high_speed_running));
+    row.ewmaHsr = getLatestEwmaValue(history, row.playerId, getNormalizedHsr);
     row.ewmaZone6 = getLatestEwmaValue(history, row.playerId, (item) => valueOrZero(item.distance_zone_6));
     row.ewmaAccelDecel = getLatestEwmaValue(history, row.playerId, accelDecelSelector);
     row.ewmaExplosive = getLatestEwmaValue(history, row.playerId, (item) => valueOrZero(item.hml_efforts));
@@ -334,7 +337,7 @@ export async function getPositionReportData(selectedDate?: string): Promise<Posi
       collisionLoad: 0,
     };
     existing.totalDistance += valueOrZero(row.total_distance);
-    existing.hsr += valueOrZero(row.high_speed_running);
+    existing.hsr += getNormalizedHsr(row);
     existing.sprintDistance += valueOrZero(row.distance_zone_6);
     existing.dsl += valueOrZero(row.dynamic_stress_load);
     existing.accelDecel += valueOrZero(row.accelerations_zone_4_6) + valueOrZero(row.decelerations_zone_4_6);

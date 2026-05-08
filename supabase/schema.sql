@@ -23,6 +23,8 @@ CREATE TABLE uploads (
   filename     text NOT NULL,
   csv_type     text NOT NULL
                  CHECK (csv_type IN ('gps', 'jump', 'force_frame', 'nordbord')),
+  season       text
+                 CHECK (season IN ('spring', 'summer', 'fall')),
   uploaded_at  timestamptz DEFAULT now(),
   row_count    int,
   status       text DEFAULT 'success'
@@ -31,6 +33,7 @@ CREATE TABLE uploads (
 );
 
 CREATE INDEX idx_uploads_type ON uploads (csv_type);
+CREATE INDEX idx_uploads_season ON uploads (season);
 CREATE INDEX idx_uploads_date ON uploads (uploaded_at);
 
 -- ─── 3. GPS Sessions (StatSports Apex) ─────────────────────────────────────
@@ -148,6 +151,7 @@ CREATE TABLE jump_tests (
   eccentric_peak_force_per_bm     real,              -- N/kg
   eccentric_peak_velocity         real,              -- m/s
   eccentric_duration_ms           real,
+  contraction_time_ms             real,
 
   -- Force at zero velocity
   force_at_zero_velocity          real,              -- N
@@ -375,7 +379,7 @@ CREATE INDEX idx_nb_date        ON nordbord_tests (test_date);
 
 -- ─── 7. Injuries ───────────────────────────────────────────────────────────
 -- Tracks injuries, rehab status, and return-to-play progression.
--- Status workflow: injured → rehab → return_to_play → cleared
+-- Status workflow: modified_load / injured → rehab → return_to_play → cleared
 CREATE TABLE injuries (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   player_id       uuid NOT NULL REFERENCES players(id) ON DELETE CASCADE,
@@ -383,7 +387,7 @@ CREATE TABLE injuries (
   injury_type     text,            -- e.g. 'hamstring strain', 'groin pull'
   body_part       text,            -- e.g. 'left hamstring', 'right groin'
   status          text NOT NULL DEFAULT 'injured'
-                    CHECK (status IN ('injured', 'rehab', 'return_to_play', 'cleared')),
+                    CHECK (status IN ('modified_load', 'injured', 'rehab', 'return_to_play', 'cleared')),
   expected_return date,            -- optional estimated return date
   notes           text,
   created_at      timestamptz DEFAULT now(),
@@ -427,7 +431,13 @@ SELECT
   MAX(g.session_title) AS session_title,
   string_agg(DISTINCT NULLIF(g.drill_title, ''), ', ') AS drill_titles,
   SUM(COALESCE(g.total_distance, 0))::real AS total_distance,
-  SUM(COALESCE(g.high_speed_running, 0))::real AS high_speed_running,
+  SUM(
+    CASE
+      WHEN g.session_date >= DATE '2026-01-01'
+      THEN COALESCE(g.distance_zone_4_6, g.high_speed_running, 0)
+      ELSE COALESCE(g.high_speed_running, g.distance_zone_4_6, 0)
+    END
+  )::real AS high_speed_running,
   SUM(COALESCE(g.distance_zone_6, 0))::real AS distance_zone_6,
   SUM(COALESCE(g.dynamic_stress_load, 0))::real AS dynamic_stress_load,
   SUM(COALESCE(g.accelerations_zone_4_6, 0))::real AS accelerations_zone_4_6,
@@ -472,6 +482,7 @@ latest_jump AS (
     j.eccentric_braking_impulse,
     j.eccentric_deceleration_rfd,
     j.eccentric_duration_ms,
+    j.contraction_time_ms,
     j.countermovement_depth_cm,
     j.concentric_mean_force_asym,
     j.eccentric_braking_impulse_asym,
@@ -505,6 +516,7 @@ SELECT
   latest_jump.eccentric_braking_impulse,
   latest_jump.eccentric_deceleration_rfd,
   latest_jump.eccentric_duration_ms,
+  latest_jump.contraction_time_ms,
   latest_jump.countermovement_depth_cm,
   latest_jump.concentric_mean_force_asym,
   latest_jump.eccentric_braking_impulse_asym,
@@ -596,6 +608,7 @@ SELECT
   chat_jump_latest.eccentric_braking_impulse,
   chat_jump_latest.eccentric_deceleration_rfd,
   chat_jump_latest.eccentric_duration_ms,
+  chat_jump_latest.contraction_time_ms,
   chat_jump_latest.countermovement_depth_cm,
   chat_jump_latest.braking_phase_duration_ms,
   latest_force_frame.groin_squeeze_force,
