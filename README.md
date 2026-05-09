@@ -8,7 +8,7 @@ facing performance dashboard automatically.
 
 ## How To Run Locally
 
-These instructions assume you have been added as a private collaborator and have the required environment variables.
+These instructions assume you have the environment variables provided separately by the authors.
 
 ### 1. Clone The Repository
 
