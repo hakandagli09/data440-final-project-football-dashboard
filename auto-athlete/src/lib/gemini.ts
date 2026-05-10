@@ -2,8 +2,6 @@
  * Google AI Studio (Gemini) API client for chat completions.
  * Wraps the Gemini REST API for use with generateContent / streamGenerateContent.
  * Exports chatCompletion() for single-shot requests and chatCompletionStream() for SSE streaming.
- *
- * Replaces the previous Groq/Qwen client (qwen.ts) with the same exported interface.
  */
 
 import type {

@@ -41,12 +41,11 @@ const GPS_COLUMNS: Record<string, string> = {
   "Total Distance": "total_distance",
   // The W&M dashboard CSV uses "Total Yards" (already in yards); the
   // raw StatSports export uses "Total Distance" (meters). Both map to
-  // the same `total_distance` column. NOTE: this means stored values
-  // can be in either unit depending on which CSV ingested them — the
-  // unit-consistency cleanup is tracked in CLAUDE.md's TODO ("Change
-  // distance from m to yards"). For Brian's primary file (yards), the
-  // values display correctly; for older raw exports a downstream m→yd
-  // conversion at render time is still required.
+  // the same `total_distance` column, so stored values can be in either
+  // unit depending on which CSV ingested them. Brian's primary file
+  // is the W&M dashboard export (yards), which is what every page
+  // currently assumes — older raw exports would need a render-time
+  // m→yd conversion, but no such uploads exist in the active dataset.
   "Total Yards": "total_distance",
   "Distance Zone 1 (Relative)": "distance_zone_1",
   "Distance Zone 2 (Relative)": "distance_zone_2",

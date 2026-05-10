@@ -3,11 +3,11 @@ import { getSessionReportData } from "@/lib/session-report-queries";
 
 interface ReportsPageProps {
   // Next.js typed search params:
-  //   `date`          → single-day view (back-compat with old links).
+  //   `date`          → single-day view.
   //   `start` + `end` → range view (e.g. drag-selected on the calendar).
   //   `session_title` → filter the report to a single practice type
   //                     (Full Pads / Accel / Helmets / etc.).
-//   `player`        → optional focused player card to highlight.
+  //   `player`        → optional focused player card to highlight.
   searchParams?: Promise<{
     date?: string;
     start?: string;

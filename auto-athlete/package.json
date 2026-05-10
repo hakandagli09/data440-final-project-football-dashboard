@@ -9,11 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@headlessui/react": "^2.2.9",
-    "@heroicons/react": "^2.2.0",
     "@supabase/supabase-js": "^2.101.1",
-    "@tremor/react": "^3.18.7",
-    "date-fns": "^4.1.0",
     "next": "14.2.35",
     "papaparse": "^5.5.3",
     "react": "^18",
