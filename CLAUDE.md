@@ -362,21 +362,6 @@ The MVP is centered on Brian's daily workflow:
 6. Use Overview as the team daily report.
 7. Use Reports for player-by-player daily investigation.
 
-## Post-MVP Roadmap
-
-Keep these out of the MVP unless explicitly requested:
-
-- Drill-level player profile dropdown.
-- Full comparison views: day-to-day, week-to-week, custom range, full season.
-- Individual vs position radar charts.
-- Retrospective injury investigation PDF.
-- Rehab `% of baseline` progress bars across all four data categories.
-- RTP-specific alert rules below 80% pre-injury baseline.
-- Position-group rolling trend overlays.
-- Cross-season comparisons.
-- Leaderboard report based on Brian's final preferred metric set.
-- Deployment/setup documentation for a fresh Supabase + Google AI Studio project.
-
 ## Coding Style Requirements
 
 - Follow existing patterns before introducing new abstractions.
